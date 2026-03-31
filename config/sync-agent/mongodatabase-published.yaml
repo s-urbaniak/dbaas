@@ -16,7 +16,9 @@ metadata:
   namespace: kcp
 spec:
   resource:
-    apiGroup: dbaas.mongodb.com
+    # kro v0.9.0 always creates CRDs in the kro.run group regardless of the
+    # RGD metadata.name — the group cannot be customised via Helm values.
+    apiGroup: kro.run
     kind: MongoDBDatabase
     versions:
       - v1alpha1

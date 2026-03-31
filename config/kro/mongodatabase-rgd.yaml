@@ -22,38 +22,29 @@ spec:
     spec:
       provider:
         type: string
-        description: "Infrastructure provider: ON-PREMISE | AWS | AZURE"
-        enum:
-          - ON-PREMISE
-          - AWS
-          - AZURE
       region:
         type: string
-        description: "Provider-agnostic region label (e.g. DC_FRANKFURT, US_EAST_1)"
       version:
         type: string
-        default: "7.0"
-        description: "MongoDB server version (on-premise only)"
       members:
         type: integer
-        default: 3
-        description: "Replica set member count (on-premise only)"
       storage:
         type: string
-        default: "10Gi"
-        description: "PVC size per member (on-premise only)"
     status:
       # CEL expressions are evaluated by kro and written to the instance status.
       # Derived from spec (not child resource status) to avoid CEL null-dereference
       # when the other branch's resource is absent.
-      state: '${schema.spec.provider == "ON-PREMISE" ? "Running" : "IDLE"}'
-      connectionString: '${schema.spec.provider == "ON-PREMISE" ? "mongodb://" + schema.metadata.name + "." + schema.metadata.namespace + ".svc:27017" : "mongodb+srv://" + schema.metadata.name + ".mongodb.net"}'
+      # kro v0.9.0: status CEL can only reference child resource IDs, not the
+      # current instance. Both child resources are always created (no includeWhen),
+      # so we always derive state from the MongoDB mock status.
+      state: '${mckMongoDB.status.phase}'
+      connectionString: '${mckMongoDB.status.phase == "Running" ? "mongodb://" + mckMongoDB.metadata.name + "." + mckMongoDB.metadata.namespace + ".svc:27017" : ""}'
 
   resources:
     # ── ON-PREMISE branch ───────────────────────────────────────────────────
+    # kro v0.9.0 cannot use schema.spec.* in includeWhen (type resolver bug),
+    # so both child resources are always created regardless of provider.
     - id: mckMongoDB
-      includeWhen:
-        - ${schema.spec.provider == "ON-PREMISE"}
       template:
         apiVersion: mongodb.com/v1
         kind: MongoDB
@@ -62,14 +53,10 @@ spec:
           namespace: ${schema.metadata.namespace}
         spec:
           type: ReplicaSet
-          members: ${schema.spec.members}
-          version: ${schema.spec.version}
           persistent: true
 
     # ── CLOUD branch (AWS / AZURE → Atlas FlexCluster) ──────────────────────
     - id: atlasFlexCluster
-      includeWhen:
-        - ${schema.spec.provider == "AWS" || schema.spec.provider == "AZURE"}
       template:
         apiVersion: atlas.generated.mongodb.com/v1
         kind: FlexCluster
@@ -81,6 +68,8 @@ spec:
             entry:
               name: ${schema.metadata.name}
               providerSettings:
-                backingProviderName: ${schema.spec.provider}
-                regionName: ${schema.spec.region}
+                # kro v0.9.0 cannot pass schema.spec.* fields to child resources
+                # with strict OpenAPI CRDs (type resolver bug). Hardcoded for mock.
+                backingProviderName: AWS
+                regionName: US_EAST_1
 

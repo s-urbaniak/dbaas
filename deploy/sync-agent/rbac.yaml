@@ -1,0 +1,26 @@
+# Extra RBAC for the sync agent to manage MongoDBDatabase instances.
+# kro v0.9.0 creates all CRDs in the kro.run group regardless of the RGD name.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: api-syncagent-mongodbdatabase
+rules:
+  - apiGroups: ["kro.run"]
+    resources: ["mongodbdatabases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["kro.run"]
+    resources: ["mongodbdatabases/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: api-syncagent-mongodbdatabase
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: api-syncagent-mongodbdatabase
+subjects:
+  - kind: ServiceAccount
+    name: api-syncagent
+    namespace: kcp

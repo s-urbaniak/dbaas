@@ -265,6 +265,39 @@ KO_DOCKER_REPO=kind.local make ko-apply
 
 ---
 
+## kro v0.9.0 known limitations
+
+These limitations were discovered during deployment and affect the PoC design:
+
+**CRD group is always `kro.run`**
+kro v0.9.0 derives the CRD group from the Kind name and always places generated
+CRDs in the `kro.run` group. The RGD `metadata.name` (e.g.
+`mongodatabases.dbaas.mongodb.com`) is only the name of the RGD object — it does
+not control the group of the CRD kro creates. The actual CRD is
+`mongodbdatabases.kro.run`. The sync agent `PublishedResource` and any RBAC must
+reference `kro.run`, not `dbaas.mongodb.com`.
+
+**Schema fields: only `type` is supported**
+kro's schema parser only accepts `type` for scalar fields. Standard OpenAPI
+keywords such as `default`, `enum`, and `description` are not recognised and
+cause a parse error (`unexpected type: <value>`). Remove them from
+`spec.schema.spec.*` fields.
+
+**`schema.spec.*` unusable in resource templates and `includeWhen`**
+CEL expressions in `spec.resources[*].template` and `includeWhen` that reference
+`schema.spec.*` fields fail type-checking with
+`type "__type_schema.spec.<field>" … type kind mismatch`. Only
+`schema.metadata.*` fields work. As a result, conditional resource creation
+based on spec fields (`includeWhen: ${schema.spec.provider == "ON-PREMISE"}`) is
+not possible; both child resources are always created.
+
+**Status CEL: only child resource IDs are in scope**
+CEL expressions in `spec.schema.status` can only reference child resource IDs
+(`mckMongoDB`, `atlasFlexCluster`). Neither `schema.*` nor `instance.*` resolves
+to the current instance — both fail with `references unknown identifiers`.
+
+---
+
 ## Design notes
 
 See [`dbaas.md`](dbaas.md) for the full design document, including:
