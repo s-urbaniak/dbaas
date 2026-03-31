@@ -11,6 +11,10 @@ Consumers interact with a single, simplified `MongoDBDatabase` API. Behind the s
 ```
 Physical Kubernetes Cluster (kind / minikube)
 │
+│  ┌─── cert-manager ───────────────────────────────────────────── ┐
+│  │  Manages TLS certificates for KCP (required prerequisite)     │
+│  └────────────────────────────────────────────────────────────── ┘
+│
 │  ┌─── KCP (Helm, StatefulSet + built-in etcd) ──────────────────┐
 │  │                                                               │
 │  │  root:dbaas-provider  (service-provider workspace)           │
@@ -53,7 +57,7 @@ Physical Kubernetes Cluster (kind / minikube)
 
 ### End-to-end flow
 
-1. Admin opens the provisioner UI, creates a workspace for a tenant.
+1. Tenant opens the provisioner UI, creates a workspace for themselves.
 2. Tenant downloads their kubeconfig and applies a `MongoDBDatabase` manifest.
 3. The API Sync Agent syncs the resource to the physical cluster.
 4. kro's microcontroller creates the appropriate backend resource (`MongoDB` or `FlexCluster`).
@@ -100,10 +104,12 @@ Physical Kubernetes Cluster (kind / minikube)
 | Tool | Purpose |
 |---|---|
 | [kind](https://kind.sigs.k8s.io/) or minikube | local Kubernetes cluster |
-| [helm](https://helm.sh/) ≥ 3.14 | install KCP, kro, API Sync Agent |
+| [helm](https://helm.sh/) ≥ 3.14 | install cert-manager, KCP, kro, API Sync Agent |
 | [ko](https://ko.build/) | build + load Go container images |
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | interact with cluster and KCP |
 | Go ≥ 1.22 | build locally |
+
+cert-manager is installed automatically by `make deploy-kcp` — no manual step needed.
 
 ---
 
@@ -118,26 +124,35 @@ kind create cluster --name dbaas
 ### 2 — Deploy the full stack
 
 ```bash
-# installs KCP, kro, API Sync Agent, mock controllers, provisioner
+# installs cert-manager, KCP, kro, API Sync Agent, mock controllers, provisioner
 make deploy
 ```
 
 This runs the following steps in order (order matters — see `dbaas.md`):
 
 ```
-deploy-kcp → apply-crds → deploy-kro → deploy-sync-agent → ko-apply
+deploy-cert-manager → deploy-kcp → apply-crds → deploy-kro → deploy-sync-agent → ko-apply
 ```
 
-> **Note:** `deploy-kro` must finish before `deploy-sync-agent`. kro dynamically
-> creates the `MongoDBDatabase` CRD; the sync agent needs it to exist.
+**Ordering constraints:**
+- `deploy-cert-manager` must complete before `deploy-kcp` — KCP uses cert-manager `Certificate` and `Issuer` resources for all its TLS PKI.
+- `deploy-kro` must complete before `deploy-sync-agent` — kro dynamically creates the `MongoDBDatabase` CRD from the `ResourceGraphDefinition`; the sync agent needs that CRD to exist when it starts.
 
-### 3 — Bootstrap KCP workspaces
+### 3 — Expose KCP and bootstrap workspaces
+
+KCP's front-proxy runs as a `ClusterIP` service. Open a **dedicated terminal** and keep the port-forward running throughout your session:
 
 ```bash
-# extract the KCP admin kubeconfig
+make kcp-port-forward        # kubectl port-forward -n kcp svc/kcp-front-proxy 6443:443
+```
+
+Then in your main terminal:
+
+```bash
+# extract the KCP admin kubeconfig (server URL is patched to https://localhost:6443)
 make get-kcp-kubeconfig      # writes to /tmp/kcp-admin.kubeconfig
 
-# create root:dbaas-provider and root:consumers in KCP
+# create root:dbaas-provider and root:consumers workspaces in KCP
 make bootstrap-kcp-workspaces
 ```
 
@@ -160,9 +175,13 @@ Open **http://localhost:8090** in your browser.
 
 ### Provision a consumer workspace
 
+Tenants self-service their own workspace via the provisioner UI:
+
 1. Open http://localhost:8090.
 2. Enter a workspace name (e.g. `tenant-a`) and click **Provision**.
 3. Once the workspace is `Ready`, click **↓ kubeconfig** to download.
+
+The provisioner creates `root:consumers:tenant-a` in KCP, binds the `mongodatabases.dbaas.mongodb.com` APIExport from `root:dbaas-provider`, and returns a kubeconfig scoped to that workspace. From inside the workspace the only visible CRD is `MongoDBDatabase`.
 
 ### Create a database
 
@@ -211,7 +230,7 @@ kubectl get mongodatabase my-onprem-db -o jsonpath='{.status}'
 ### Inspect backend resources (physical cluster)
 
 ```bash
-# switch back to the cluster kubeconfig
+# switch back to the physical cluster kubeconfig
 unset KUBECONFIG
 
 kubectl get mongodb,flexclusters -A

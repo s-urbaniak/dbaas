@@ -1,19 +1,26 @@
 # KCP Helm values for a local kind/minikube cluster.
 # Ref: https://kcp-dev.github.io/helm-charts
 
-kcp:
-  # Use a NodePort service so the KCP API server is reachable from the host via
-  # `kubectl port-forward` or directly on the node port.
+# Required: hostname used in TLS SANs and workspace URLs.
+# For local dev we use localhost and port-forward to reach the front-proxy.
+externalHostname: localhost
+# Must be a string: the chart template uses `eq .Values.externalPort ""` to check
+# for an empty value, which fails with a type error if the value is an integer.
+externalPort: "6443"
+
+kcpFrontProxy:
   service:
-    type: NodePort
+    # ClusterIP is sufficient for local dev — reach it via kubectl port-forward.
+    type: ClusterIP
 
+etcd:
   # Persistent storage for the embedded etcd.
-  etcd:
-    persistence:
-      enabled: true
-      size: 2Gi
-      # storageClassName: standard   # uncomment and set if your cluster needs a specific class
+  persistence:
+    enabled: true
+    size: 2Gi
+    # storageClassName: standard   # uncomment and set if your cluster needs a specific class
 
+kcp:
   # Self-signed TLS — acceptable for local dev.
   tls:
     selfSigned: true

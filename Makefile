@@ -64,13 +64,26 @@ apply-crds: apply-mck-crds apply-atlas-crds
 # ── Helm repo bootstrap ────────────────────────────────────────────────────────
 .PHONY: helm-repos
 helm-repos:
-	$(HELM) repo add kcp https://kcp-dev.github.io/helm-charts 2>/dev/null || true
-	$(HELM) repo add kro https://kro.run/charts                2>/dev/null || true
+	$(HELM) repo add kcp          https://kcp-dev.github.io/helm-charts 2>/dev/null || true
+	$(HELM) repo add kro          https://kro.run/charts                2>/dev/null || true
+	$(HELM) repo add cert-manager https://charts.jetstack.io            2>/dev/null || true
 	$(HELM) repo update
+
+# ── cert-manager (required by KCP for TLS certificate management) ─────────────
+.PHONY: deploy-cert-manager undeploy-cert-manager
+deploy-cert-manager: helm-repos
+	$(HELM) upgrade --install cert-manager cert-manager/cert-manager \
+	  -n cert-manager --create-namespace \
+	  --set crds.enabled=true
+	$(KUBECTL) -n cert-manager rollout status deployment/cert-manager --timeout=120s
+	$(KUBECTL) -n cert-manager rollout status deployment/cert-manager-webhook --timeout=120s
+
+undeploy-cert-manager:
+	$(HELM) uninstall cert-manager -n cert-manager || true
 
 # ── KCP ───────────────────────────────────────────────────────────────────────
 .PHONY: deploy-kcp undeploy-kcp
-deploy-kcp: helm-repos
+deploy-kcp: deploy-cert-manager
 	$(HELM) upgrade --install kcp $(HELM_KCP_CHART) \
 	  -n $(HELM_KCP_NS) --create-namespace \
 	  -f $(HELM_KCP_VALUES)
@@ -84,7 +97,17 @@ undeploy-kcp:
 get-kcp-kubeconfig:
 	$(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-admin-kubeconfig \
 	  -o jsonpath='{.data.kubeconfig}' | base64 -d > $(KCP_KUBECONFIG)
+	# Rewrite the server URL to localhost:6443 so it works with port-forward.
+	KUBECONFIG=$(KCP_KUBECONFIG) $(KUBECTL) config set-cluster kcp \
+	  --server=https://localhost:6443 2>/dev/null || \
+	  sed -i.bak 's|server: https://[^[:space:]]*|server: https://localhost:6443|' $(KCP_KUBECONFIG)
 	@echo "✓ KCP admin kubeconfig written to $(KCP_KUBECONFIG)"
+
+# Port-forward the KCP front-proxy to localhost:6443.
+# Run this in a separate terminal after deploy-kcp.
+.PHONY: kcp-port-forward
+kcp-port-forward:
+	$(KUBECTL) -n $(HELM_KCP_NS) port-forward svc/kcp-front-proxy 6443:443
 
 # Bootstrap the root:dbaas-provider and root:consumers workspaces in KCP.
 # Must run AFTER deploy-kcp and get-kcp-kubeconfig.
@@ -153,7 +176,7 @@ deploy: deploy-kcp apply-crds deploy-kro deploy-sync-agent ko-apply
 	@echo "═══════════════════════════════════════════════════════"
 
 .PHONY: undeploy
-undeploy: undeploy-sync-agent undeploy-kro undeploy-kcp
+undeploy: undeploy-sync-agent undeploy-kro undeploy-kcp undeploy-cert-manager
 	$(KUBECTL) delete -f deploy/mock-mongodb/    --ignore-not-found
 	$(KUBECTL) delete -f deploy/mock-flexcluster/ --ignore-not-found
 	$(KUBECTL) delete -f deploy/provisioner/      --ignore-not-found
