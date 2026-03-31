@@ -183,9 +183,9 @@ The provisioner creates `root:consumers:tenant-a` in KCP, binds the `mongodataba
 ```bash
 export KUBECONFIG=/path/to/tenant-a.kubeconfig
 
-# on-premise MongoDB (routes to MCK)
+# on-premise MongoDB (creates MCK MongoDB + Atlas FlexCluster child resources)
 kubectl apply -f - <<EOF
-apiVersion: dbaas.mongodb.com/v1alpha1
+apiVersion: kro.run/v1alpha1
 kind: MongoDBDatabase
 metadata:
   name: my-onprem-db
@@ -198,9 +198,9 @@ spec:
   storage: 10Gi
 EOF
 
-# cloud Atlas FlexCluster (routes to Atlas operator)
+# cloud Atlas FlexCluster (same — both child resources always created, see kro limitations)
 kubectl apply -f - <<EOF
-apiVersion: dbaas.mongodb.com/v1alpha1
+apiVersion: kro.run/v1alpha1
 kind: MongoDBDatabase
 metadata:
   name: my-atlas-db
@@ -208,16 +208,20 @@ metadata:
 spec:
   provider: AWS
   region: US_EAST_1
+  members: 3
 EOF
 ```
+
+> **Note:** `apiVersion` is `kro.run/v1alpha1` — kro v0.9.0 always creates CRDs
+> in the `kro.run` group. See [kro limitations](#kro-v090-known-limitations).
 
 ### Inspect status
 
 ```bash
-kubectl get mongodatabase
-# NAME           PROVIDER     REGION       STATE     READY
-# my-onprem-db   ON-PREMISE   DC_FRANKFURT Running   True
-# my-atlas-db    AWS          US_EAST_1    IDLE      True
+kubectl get mongodbdatabases
+# NAME           PROVIDER     STATE     READY
+# my-onprem-db   ON-PREMISE   Running   True
+# my-atlas-db    AWS          Running   True
 
 kubectl get mongodatabase my-onprem-db -o jsonpath='{.status}'
 ```
