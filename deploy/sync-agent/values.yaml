@@ -1,0 +1,16 @@
+# API Sync Agent Helm values.
+
+# The sync agent creates an APIExport named mongodatabases.dbaas.mongodb.com in
+# root:dbaas-provider. KCP then creates an APIExportEndpointSlice with the same
+# name. This tells the agent which endpoint slice to watch.
+apiExportEndpointSliceName: mongodatabases.dbaas.mongodb.com
+
+# Secret (in the kcp namespace) with the KCP kubeconfig for the sync agent.
+# Created by the create-sync-agent-secret Makefile target.
+# Uses the in-cluster KCP front-proxy address (not localhost:6443).
+# The front-proxy service exposes port 8443 (not 443).
+kcpKubeconfig: kcp-syncagent-kubeconfig
+
+# Single replica with leader election off is fine for local dev.
+replicas: 1
+enableLeaderElection: false

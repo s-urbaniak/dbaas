@@ -121,42 +121,37 @@ cert-manager is installed automatically by `make deploy-kcp` — no manual step 
 kind create cluster --name dbaas
 ```
 
-### 2 — Deploy the full stack
+### 2 — Phase 1: infrastructure (no port-forward needed)
 
 ```bash
-# installs cert-manager, KCP, kro, API Sync Agent, mock controllers, provisioner
-make deploy
+make deploy-phase1
 ```
 
-This runs the following steps in order (order matters — see `dbaas.md`):
-
-```
-deploy-cert-manager → deploy-kcp → apply-crds → deploy-kro → deploy-sync-agent → ko-apply
-```
+This installs: cert-manager → KCP → MCK + Atlas CRDs → kro + ResourceGraphDefinition.
 
 **Ordering constraints:**
-- `deploy-cert-manager` must complete before `deploy-kcp` — KCP uses cert-manager `Certificate` and `Issuer` resources for all its TLS PKI.
-- `deploy-kro` must complete before `deploy-sync-agent` — kro dynamically creates the `MongoDBDatabase` CRD from the `ResourceGraphDefinition`; the sync agent needs that CRD to exist when it starts.
+- cert-manager must be ready before KCP — KCP uses cert-manager `Certificate` and `Issuer` resources for its entire TLS PKI.
+- kro must complete before the sync agent — kro dynamically creates the `MongoDBDatabase` CRD; the sync agent needs it to exist at startup.
 
-### 3 — Expose KCP and bootstrap workspaces
+### 3 — Expose KCP (keep running in a dedicated terminal)
 
-KCP's front-proxy runs as a `ClusterIP` service. Open a **dedicated terminal** and keep the port-forward running throughout your session:
+KCP's front-proxy is a `ClusterIP` service, so you need a port-forward to reach it from your host:
 
 ```bash
 make kcp-port-forward        # kubectl port-forward -n kcp svc/kcp-front-proxy 6443:443
 ```
 
-Then in your main terminal:
+Leave this running for all subsequent steps.
+
+### 4 — Phase 2: workspaces, sync agent, controllers
 
 ```bash
-# extract the KCP admin kubeconfig (server URL is patched to https://localhost:6443)
-make get-kcp-kubeconfig      # writes to /tmp/kcp-admin.kubeconfig
-
-# create root:dbaas-provider and root:consumers workspaces in KCP
-make bootstrap-kcp-workspaces
+make deploy-phase2
 ```
 
-### 4 — Expose the provisioner
+This runs: `get-kcp-kubeconfig` → `bootstrap-kcp-workspaces` → `deploy-sync-agent` → `ko-apply`.
+
+### 5 — Expose the provisioner
 
 ```bash
 # make the KCP admin kubeconfig available to the provisioner pod

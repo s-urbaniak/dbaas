@@ -16,7 +16,8 @@ HELM_KCP_VALUES := deploy/kcp/kcp-values.yaml
 KCP_KUBECONFIG ?= /tmp/kcp-admin.kubeconfig
 
 # ── kro Helm ────────────────────────────────────────────────────────────────────
-HELM_KRO_CHART  := kro/kro
+# kro is distributed as an OCI chart — no helm repo add needed.
+HELM_KRO_CHART  := oci://registry.k8s.io/kro/charts/kro
 HELM_KRO_NS     := kro
 HELM_KRO_VALUES := deploy/kro/kro-values.yaml
 
@@ -65,8 +66,8 @@ apply-crds: apply-mck-crds apply-atlas-crds
 .PHONY: helm-repos
 helm-repos:
 	$(HELM) repo add kcp          https://kcp-dev.github.io/helm-charts 2>/dev/null || true
-	$(HELM) repo add kro          https://kro.run/charts                2>/dev/null || true
 	$(HELM) repo add cert-manager https://charts.jetstack.io            2>/dev/null || true
+	# kro is an OCI chart — no repo entry needed
 	$(HELM) repo update
 
 # ── cert-manager (required by KCP for TLS certificate management) ─────────────
@@ -95,19 +96,19 @@ undeploy-kcp:
 # Adjust the secret name/namespace to match your KCP Helm chart output.
 .PHONY: get-kcp-kubeconfig
 get-kcp-kubeconfig:
-	$(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-admin-kubeconfig \
+	$(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-external-admin-kubeconfig \
 	  -o jsonpath='{.data.kubeconfig}' | base64 -d > $(KCP_KUBECONFIG)
 	# Rewrite the server URL to localhost:6443 so it works with port-forward.
-	KUBECONFIG=$(KCP_KUBECONFIG) $(KUBECTL) config set-cluster kcp \
-	  --server=https://localhost:6443 2>/dev/null || \
-	  sed -i.bak 's|server: https://[^[:space:]]*|server: https://localhost:6443|' $(KCP_KUBECONFIG)
+	KUBECONFIG=$(KCP_KUBECONFIG) $(KUBECTL) config set-cluster \
+	  $$(KUBECONFIG=$(KCP_KUBECONFIG) $(KUBECTL) config view -o jsonpath='{.clusters[0].name}') \
+	  --server=https://localhost:6443
 	@echo "✓ KCP admin kubeconfig written to $(KCP_KUBECONFIG)"
 
 # Port-forward the KCP front-proxy to localhost:6443.
 # Run this in a separate terminal after deploy-kcp.
 .PHONY: kcp-port-forward
 kcp-port-forward:
-	$(KUBECTL) -n $(HELM_KCP_NS) port-forward svc/kcp-front-proxy 6443:443
+	$(KUBECTL) -n $(HELM_KCP_NS) port-forward svc/kcp-front-proxy 6443:8443
 
 # Bootstrap the root:dbaas-provider and root:consumers workspaces in KCP.
 # Must run AFTER deploy-kcp and get-kcp-kubeconfig.
@@ -133,10 +134,28 @@ undeploy-kro:
 	$(HELM) uninstall kro -n $(HELM_KRO_NS) || true
 
 # ── API Sync Agent ─────────────────────────────────────────────────────────────
+
+# Create the sync agent's KCP kubeconfig secret inside the cluster.
+# The admin kubeconfig (KCP_KUBECONFIG) uses localhost:6443 (port-forward) which
+# is unreachable from pods. We rewrite the server URL to the in-cluster KCP
+# front-proxy service address before storing it as a secret.
+.PHONY: create-sync-agent-secret
+create-sync-agent-secret:
+	cp $(KCP_KUBECONFIG) /tmp/kcp-syncagent.kubeconfig
+	KUBECONFIG=/tmp/kcp-syncagent.kubeconfig $(KUBECTL) config set-cluster \
+	  $$(KUBECONFIG=/tmp/kcp-syncagent.kubeconfig $(KUBECTL) config view -o jsonpath='{.clusters[0].name}') \
+	  --server=https://kcp-front-proxy.kcp.svc.cluster.local:8443
+	$(KUBECTL) -n $(HELM_AGENT_NS) create secret generic kcp-syncagent-kubeconfig \
+	  --from-file=kubeconfig=/tmp/kcp-syncagent.kubeconfig \
+	  --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	@rm -f /tmp/kcp-syncagent.kubeconfig
+	@echo "✓ kcp-syncagent-kubeconfig secret created in namespace $(HELM_AGENT_NS)"
+
 .PHONY: deploy-sync-agent undeploy-sync-agent
-deploy-sync-agent: helm-repos
+deploy-sync-agent: helm-repos create-sync-agent-secret
 	$(HELM) upgrade --install api-syncagent $(HELM_AGENT_CHART) \
-	  -n $(HELM_AGENT_NS) --create-namespace
+	  -n $(HELM_AGENT_NS) --create-namespace \
+	  -f deploy/sync-agent/values.yaml
 	$(KUBECTL) apply -f config/sync-agent/
 
 undeploy-sync-agent:
@@ -158,22 +177,50 @@ ko-apply:
 	  -f deploy/provisioner/
 
 # ── Full deploy sequence ────────────────────────────────────────────────────────
-# Order matters: kro before sync-agent (kro creates the CRD the sync agent needs).
+# Deploying requires a port-forward to KCP mid-way through, so the full sequence
+# is split into two phases:
+#
+#   Phase 1 (no port-forward needed):
+#     make deploy-phase1
+#       → cert-manager → KCP → CRDs → kro
+#
+#   Then in a separate terminal:
+#     make kcp-port-forward
+#
+#   Phase 2 (port-forward must be running):
+#     make deploy-phase2
+#       → get-kcp-kubeconfig → bootstrap-kcp-workspaces → sync-agent → controllers
+#
+# deploy-phase1 and deploy-phase2 together replace the old one-shot `make deploy`.
+.PHONY: deploy-phase1
+deploy-phase1: deploy-kcp apply-crds deploy-kro
+	@echo ""
+	@echo "═══════════════════════════════════════════════════════"
+	@echo "  Phase 1 complete (cert-manager, KCP, CRDs, kro)."
+	@echo ""
+	@echo "  Now run in a separate terminal and keep it running:"
+	@echo "    make kcp-port-forward"
+	@echo ""
+	@echo "  Then continue with:"
+	@echo "    make deploy-phase2"
+	@echo "═══════════════════════════════════════════════════════"
+
+.PHONY: deploy-phase2
+deploy-phase2: get-kcp-kubeconfig bootstrap-kcp-workspaces deploy-sync-agent ko-apply
+	@echo ""
+	@echo "═══════════════════════════════════════════════════════"
+	@echo "  Phase 2 complete (workspaces, sync-agent, controllers)."
+	@echo ""
+	@echo "  Expose the provisioner:"
+	@echo "    kubectl create secret generic kcp-admin-kubeconfig \\"
+	@echo "      --from-file=kubeconfig=$(KCP_KUBECONFIG)"
+	@echo "    kubectl rollout restart deployment/dbaas-provisioner"
+	@echo "    kubectl port-forward svc/dbaas-provisioner 8090"
+	@echo "    → open http://localhost:8090"
+	@echo "═══════════════════════════════════════════════════════"
+
 .PHONY: deploy
-deploy: deploy-kcp apply-crds deploy-kro deploy-sync-agent ko-apply
-	@echo ""
-	@echo "═══════════════════════════════════════════════════════"
-	@echo "  DBaaS stack deployed."
-	@echo ""
-	@echo "  Next steps:"
-	@echo "  1. make get-kcp-kubeconfig"
-	@echo "  2. make bootstrap-kcp-workspaces"
-	@echo "  3. kubectl create secret generic kcp-admin-kubeconfig \\"
-	@echo "       --from-file=kubeconfig=$(KCP_KUBECONFIG)"
-	@echo "  4. kubectl rollout restart deployment/dbaas-provisioner"
-	@echo "  5. kubectl port-forward svc/dbaas-provisioner 8090"
-	@echo "     → open http://localhost:8090"
-	@echo "═══════════════════════════════════════════════════════"
+deploy: deploy-phase1 deploy-phase2
 
 .PHONY: undeploy
 undeploy: undeploy-sync-agent undeploy-kro undeploy-kcp undeploy-cert-manager
