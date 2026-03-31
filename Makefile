@@ -88,6 +88,7 @@ deploy-kcp: deploy-cert-manager
 	$(HELM) upgrade --install kcp $(HELM_KCP_CHART) \
 	  -n $(HELM_KCP_NS) --create-namespace \
 	  -f $(HELM_KCP_VALUES)
+	$(KUBECTL) apply -f deploy/kcp/admin-cert.yaml
 
 undeploy-kcp:
 	$(HELM) uninstall kcp -n $(HELM_KCP_NS) || true
@@ -96,12 +97,17 @@ undeploy-kcp:
 # Adjust the secret name/namespace to match your KCP Helm chart output.
 .PHONY: get-kcp-kubeconfig
 get-kcp-kubeconfig:
-	$(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-external-admin-kubeconfig \
-	  -o jsonpath='{.data.kubeconfig}' | base64 -d > $(KCP_KUBECONFIG)
-	# Rewrite the server URL to localhost:6443 so it works with port-forward.
-	KUBECONFIG=$(KCP_KUBECONFIG) $(KUBECTL) config set-cluster \
-	  $$(KUBECONFIG=$(KCP_KUBECONFIG) $(KUBECTL) config view -o jsonpath='{.clusters[0].name}') \
-	  --server=https://localhost:6443
+	# The kubeconfig stored in the secret references cert files at /etc/kcp/...
+	# (in-pod paths inaccessible from the host). Build a self-contained kubeconfig
+	# by embedding the cert data from kcp-external-admin-kubeconfig-cert inline.
+	@CA=$$($(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-ca \
+	         -o jsonpath='{.data.tls\.crt}'); \
+	 CERT=$$($(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-admin-client-cert \
+	           -o jsonpath='{.data.tls\.crt}'); \
+	 KEY=$$($(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-admin-client-cert \
+	          -o jsonpath='{.data.tls\.key}'); \
+	 printf 'apiVersion: v1\nkind: Config\nclusters:\n- name: kcp\n  cluster:\n    server: https://localhost:6443/clusters/root\n    certificate-authority-data: %s\nusers:\n- name: kcp-admin\n  user:\n    client-certificate-data: %s\n    client-key-data: %s\ncontexts:\n- name: kcp\n  context:\n    cluster: kcp\n    user: kcp-admin\ncurrent-context: kcp\n' \
+	   "$$CA" "$$CERT" "$$KEY" > $(KCP_KUBECONFIG)
 	@echo "✓ KCP admin kubeconfig written to $(KCP_KUBECONFIG)"
 
 # Port-forward the KCP front-proxy to localhost:6443.
@@ -114,7 +120,14 @@ kcp-port-forward:
 # Must run AFTER deploy-kcp and get-kcp-kubeconfig.
 .PHONY: bootstrap-kcp-workspaces
 bootstrap-kcp-workspaces:
-	KUBECONFIG=$(KCP_KUBECONFIG) $(KUBECTL) apply -f deploy/kcp/workspaces.yaml
+	KUBECONFIG=$(KCP_KUBECONFIG) $(KUBECTL) apply --validate=false -f deploy/kcp/workspaces.yaml
+	# Create the empty APIExport in root:dbaas-provider so KCP generates the
+	# APIExportEndpointSlice that the sync agent needs at startup.
+	@cp $(KCP_KUBECONFIG) /tmp/kcp-provider.kubeconfig
+	@KUBECONFIG=/tmp/kcp-provider.kubeconfig $(KUBECTL) config set-cluster kcp \
+	  --server=https://localhost:6443/clusters/root:dbaas-provider
+	@KUBECONFIG=/tmp/kcp-provider.kubeconfig $(KUBECTL) apply --validate=false -f deploy/kcp/apiexport.yaml
+	@rm -f /tmp/kcp-provider.kubeconfig
 
 # ── kro ───────────────────────────────────────────────────────────────────────
 # IMPORTANT: deploy-kro must succeed before deploy-sync-agent.
@@ -142,9 +155,11 @@ undeploy-kro:
 .PHONY: create-sync-agent-secret
 create-sync-agent-secret:
 	cp $(KCP_KUBECONFIG) /tmp/kcp-syncagent.kubeconfig
+	# Repoint to in-cluster KCP service. TLS verification works because
+	# kcp-values.yaml adds kcp-front-proxy.kcp.svc.cluster.local to extraDNSNames.
 	KUBECONFIG=/tmp/kcp-syncagent.kubeconfig $(KUBECTL) config set-cluster \
 	  $$(KUBECONFIG=/tmp/kcp-syncagent.kubeconfig $(KUBECTL) config view -o jsonpath='{.clusters[0].name}') \
-	  --server=https://kcp-front-proxy.kcp.svc.cluster.local:8443
+	  --server=https://kcp-front-proxy.kcp.svc.cluster.local:8443/clusters/root:dbaas-provider
 	$(KUBECTL) -n $(HELM_AGENT_NS) create secret generic kcp-syncagent-kubeconfig \
 	  --from-file=kubeconfig=/tmp/kcp-syncagent.kubeconfig \
 	  --dry-run=client -o yaml | $(KUBECTL) apply -f -

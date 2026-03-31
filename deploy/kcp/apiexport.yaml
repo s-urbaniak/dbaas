@@ -1,0 +1,9 @@
+# Empty APIExport in root:dbaas-provider.
+# Must be created before the sync agent starts: KCP creates an APIExportEndpointSlice
+# with the same name once this APIExport exists, and the sync agent needs that
+# APIExportEndpointSlice to resolve its --apiexportendpointslice-ref at startup.
+# The sync agent will populate this export with schemas via its PublishedResource.
+apiVersion: apis.kcp.io/v1alpha2
+kind: APIExport
+metadata:
+  name: mongodatabases.dbaas.mongodb.com

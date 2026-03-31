@@ -1,0 +1,23 @@
+# Creates a client certificate for the KCP admin user with group system:kcp:admin.
+# This grants global admin permissions across all workspaces.
+#
+# Must be issued by kcp-front-proxy-client-issuer: the KCP front-proxy passes
+# --client-ca-file pointing to kcp-front-proxy-client-ca, so only certs signed
+# by that CA are accepted for external client authentication.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kcp-admin-client-cert
+  namespace: kcp
+spec:
+  commonName: kcp-admin
+  subject:
+    organizations:
+      - "system:kcp:admin"
+  secretName: kcp-admin-client-cert
+  issuerRef:
+    name: kcp-front-proxy-client-issuer
+    kind: Issuer
+  usages:
+    - client auth
+  duration: 87600h  # 10 years — dev only

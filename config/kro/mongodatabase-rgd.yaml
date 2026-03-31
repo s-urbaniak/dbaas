@@ -17,7 +17,7 @@ metadata:
   name: mongodatabases.dbaas.mongodb.com
 spec:
   schema:
-    apiVersion: dbaas.mongodb.com/v1alpha1
+    apiVersion: v1alpha1
     kind: MongoDBDatabase
     spec:
       provider:
@@ -43,12 +43,11 @@ spec:
         default: "10Gi"
         description: "PVC size per member (on-premise only)"
     status:
-      # Lifecycle state: derived from spec so both conditional branches are safe.
-      state:
-        type: string
-      # Connection string: computed from known naming conventions.
-      connectionString:
-        type: string
+      # CEL expressions are evaluated by kro and written to the instance status.
+      # Derived from spec (not child resource status) to avoid CEL null-dereference
+      # when the other branch's resource is absent.
+      state: '${schema.spec.provider == "ON-PREMISE" ? "Running" : "IDLE"}'
+      connectionString: '${schema.spec.provider == "ON-PREMISE" ? "mongodb://" + schema.metadata.name + "." + schema.metadata.namespace + ".svc:27017" : "mongodb+srv://" + schema.metadata.name + ".mongodb.net"}'
 
   resources:
     # ── ON-PREMISE branch ───────────────────────────────────────────────────
@@ -85,13 +84,3 @@ spec:
                 backingProviderName: ${schema.spec.provider}
                 regionName: ${schema.spec.region}
 
-  # Status is intentionally derived from spec (not from child resource status)
-  # to avoid CEL null-dereference when the other branch's resource is absent.
-  # TODO: once kro stabilises optional resource access, aggregate from children.
-  status:
-    state: >
-      ${schema.spec.provider == "ON-PREMISE" ? "Running" : "IDLE"}
-    connectionString: >
-      ${schema.spec.provider == "ON-PREMISE" ?
-        "mongodb://" + schema.metadata.name + "." + schema.metadata.namespace + ".svc:27017" :
-        "mongodb+srv://" + schema.metadata.name + ".mongodb.net"}

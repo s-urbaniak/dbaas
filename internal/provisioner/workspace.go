@@ -36,7 +36,7 @@ import (
 var (
 	workspaceGVR = schema.GroupVersionResource{
 		Group:    "tenancy.kcp.io",
-		Version:  "v1beta1",
+		Version:  "v1alpha1",
 		Resource: "workspaces",
 	}
 	apiBindingGVR = schema.GroupVersionResource{
@@ -101,11 +101,11 @@ func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (stri
 	}
 
 	ws := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "tenancy.kcp.io/v1beta1",
+		"apiVersion": "tenancy.kcp.io/v1alpha1",
 		"kind":       "Workspace",
 		"metadata":   map[string]any{"name": name},
 		"spec": map[string]any{
-			"type": map[string]any{"name": "Universal"},
+			"type": map[string]any{"name": "universal"},
 		},
 	}}
 	if _, err := consumersClient.Resource(workspaceGVR).Create(ctx, ws, metav1.CreateOptions{}); err != nil {
