@@ -31,7 +31,9 @@ import (
 
 func main() {
 	var metricsAddr string
+	var enableLeaderElection bool
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Metrics endpoint address.")
+	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election for controller manager.")
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -42,8 +44,11 @@ func main() {
 	_ = clientgoscheme.AddToScheme(scheme)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme:  scheme,
-		Metrics: metricsserver.Options{BindAddress: metricsAddr},
+		Scheme:                  scheme,
+		Metrics:                 metricsserver.Options{BindAddress: metricsAddr},
+		LeaderElection:          enableLeaderElection,
+		LeaderElectionID:        "mock-mongodb.dbaas.mongodb.com",
+		LeaderElectionNamespace: "default",
 	})
 	if err != nil {
 		ctrl.Log.Error(err, "unable to start manager")
