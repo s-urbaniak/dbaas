@@ -20,23 +20,14 @@ spec:
     apiVersion: v1alpha1
     kind: MongoDBDatabase
     spec:
-      provider:
-        type: string
-      region:
-        type: string
-      version:
-        type: string
-      members:
-        type: integer
-      storage:
-        type: string
+      provider: string
+      region: string
+      version: string
+      members: integer
+      storage: string
     status:
-      # CEL expressions are evaluated by kro and written to the instance status.
-      # Derived from spec (not child resource status) to avoid CEL null-dereference
-      # when the other branch's resource is absent.
-      # kro v0.9.0: status CEL can only reference child resource IDs, not the
-      # current instance. Both child resources are always created (no includeWhen),
-      # so we always derive state from the MongoDB mock status.
+      # kro schema format: 'fieldname: ${CEL}' to populate at runtime from child
+      # resources. status CEL can only reference child resource IDs (not instance.*).
       state: '${mckMongoDB.status.phase}'
       connectionString: '${mckMongoDB.status.phase == "Running" ? "mongodb://" + mckMongoDB.metadata.name + "." + mckMongoDB.metadata.namespace + ".svc:27017" : ""}'
 
