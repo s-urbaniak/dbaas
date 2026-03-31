@@ -1,0 +1,20 @@
+# PublishedResource tells the KCP API Sync Agent to:
+# 1. Expose the MongoDBDatabase CRD as an APIExport in KCP.
+# 2. Sync MongoDBDatabase instances created in KCP workspaces down to the
+#    physical cluster where the mock controller runs.
+# 3. Propagate status changes back up to the KCP workspace.
+#
+# Ref: https://docs.kcp.io/api-syncagent/v0.5/
+apiVersion: syncagent.kcp.io/v1alpha1
+kind: PublishedResource
+metadata:
+  name: mongodatabases
+  namespace: kcp
+spec:
+  resource:
+    group: dbaas.mongodb.com
+    resource: mongodatabases
+    version: v1alpha1
+  # Sync status sub-resource back to KCP workspace.
+  statusBackSync:
+    enabled: true

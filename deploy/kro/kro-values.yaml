@@ -1,0 +1,12 @@
+# kro Helm values for a local kind/minikube cluster.
+# Ref: https://kro.run/docs/getting-started/
+#
+# Minimal overrides — kro defaults are suitable for local dev.
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 128Mi

@@ -1,0 +1,97 @@
+# kro ResourceGraphDefinition for MongoDBDatabase.
+#
+# kro reads this and:
+#   1. Auto-generates the CRD  dbaas.mongodb.com/v1alpha1 MongoDBDatabase
+#   2. Runs a dedicated microcontroller that, on each MongoDBDatabase instance:
+#      - Creates a mongodb.com/v1 MongoDB child  (provider=ON-PREMISE)
+#      - Creates an atlas FlexCluster child       (provider=AWS or AZURE)
+#
+# Status is derived from spec input to avoid CEL null-reference issues when
+# referencing conditionally excluded child resources.
+# A production version would aggregate real status from mckMongoDB / atlasFlexCluster.
+#
+# Ref: https://kro.run/docs/concepts/
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: mongodatabases.dbaas.mongodb.com
+spec:
+  schema:
+    apiVersion: dbaas.mongodb.com/v1alpha1
+    kind: MongoDBDatabase
+    spec:
+      provider:
+        type: string
+        description: "Infrastructure provider: ON-PREMISE | AWS | AZURE"
+        enum:
+          - ON-PREMISE
+          - AWS
+          - AZURE
+      region:
+        type: string
+        description: "Provider-agnostic region label (e.g. DC_FRANKFURT, US_EAST_1)"
+      version:
+        type: string
+        default: "7.0"
+        description: "MongoDB server version (on-premise only)"
+      members:
+        type: integer
+        default: 3
+        description: "Replica set member count (on-premise only)"
+      storage:
+        type: string
+        default: "10Gi"
+        description: "PVC size per member (on-premise only)"
+    status:
+      # Lifecycle state: derived from spec so both conditional branches are safe.
+      state:
+        type: string
+      # Connection string: computed from known naming conventions.
+      connectionString:
+        type: string
+
+  resources:
+    # ── ON-PREMISE branch ───────────────────────────────────────────────────
+    - id: mckMongoDB
+      includeWhen:
+        - ${schema.spec.provider == "ON-PREMISE"}
+      template:
+        apiVersion: mongodb.com/v1
+        kind: MongoDB
+        metadata:
+          name: ${schema.metadata.name}
+          namespace: ${schema.metadata.namespace}
+        spec:
+          type: ReplicaSet
+          members: ${schema.spec.members}
+          version: ${schema.spec.version}
+          persistent: true
+
+    # ── CLOUD branch (AWS / AZURE → Atlas FlexCluster) ──────────────────────
+    - id: atlasFlexCluster
+      includeWhen:
+        - ${schema.spec.provider == "AWS" || schema.spec.provider == "AZURE"}
+      template:
+        apiVersion: atlas.generated.mongodb.com/v1
+        kind: FlexCluster
+        metadata:
+          name: ${schema.metadata.name}
+          namespace: ${schema.metadata.namespace}
+        spec:
+          v20250312:
+            entry:
+              name: ${schema.metadata.name}
+              providerSettings:
+                backingProviderName: ${schema.spec.provider}
+                regionName: ${schema.spec.region}
+
+  # Status is intentionally derived from spec (not from child resource status)
+  # to avoid CEL null-dereference when the other branch's resource is absent.
+  # TODO: once kro stabilises optional resource access, aggregate from children.
+  status:
+    state: >
+      ${schema.spec.provider == "ON-PREMISE" ? "Running" : "IDLE"}
+    connectionString: >
+      ${schema.spec.provider == "ON-PREMISE" ?
+        "mongodb://" + schema.metadata.name + "." + schema.metadata.namespace + ".svc:27017" :
+        "mongodb+srv://" + schema.metadata.name + ".mongodb.net"}

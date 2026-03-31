@@ -1,0 +1,22 @@
+# KCP Helm values for a local kind/minikube cluster.
+# Ref: https://kcp-dev.github.io/helm-charts
+
+kcp:
+  # Use a NodePort service so the KCP API server is reachable from the host via
+  # `kubectl port-forward` or directly on the node port.
+  service:
+    type: NodePort
+
+  # Persistent storage for the embedded etcd.
+  etcd:
+    persistence:
+      enabled: true
+      size: 2Gi
+      # storageClassName: standard   # uncomment and set if your cluster needs a specific class
+
+  # Self-signed TLS — acceptable for local dev.
+  tls:
+    selfSigned: true
+
+  # Single replica is fine for local dev.
+  replicaCount: 1

@@ -1,0 +1,24 @@
+# Bootstrap workspaces applied against the KCP root workspace (KUBECONFIG=kcp-admin).
+#
+# root:dbaas-provider  — service-provider workspace; the API Sync Agent will create
+#                        the APIExport here via its PublishedResource.
+# root:consumers       — parent org workspace; all consumer workspaces live under it.
+#
+# Apply with:
+#   kubectl --kubeconfig=<kcp-admin-kubeconfig> apply -f deploy/kcp/workspaces.yaml
+---
+apiVersion: tenancy.kcp.io/v1beta1
+kind: Workspace
+metadata:
+  name: dbaas-provider
+spec:
+  type:
+    name: Universal
+---
+apiVersion: tenancy.kcp.io/v1beta1
+kind: Workspace
+metadata:
+  name: consumers
+spec:
+  type:
+    name: Universal

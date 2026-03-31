@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DBaaS Provisioner</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f0f2f5;
+      margin: 0;
+      padding: 40px 20px;
+      color: #1a1a2e;
+    }
+    .container { max-width: 860px; margin: 0 auto; }
+    h1 { font-size: 1.6rem; margin-bottom: 4px; }
+    .subtitle { color: #666; margin-bottom: 32px; font-size: 0.9rem; }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    h2 { font-size: 1rem; margin: 0 0 16px; color: #333; }
+    .form-row { display: flex; gap: 10px; }
+    input[type=text] {
+      flex: 1;
+      padding: 9px 12px;
+      border: 1px solid #d0d5dd;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      outline: none;
+    }
+    input[type=text]:focus { border-color: #0070f3; box-shadow: 0 0 0 3px rgba(0,112,243,.1); }
+    button {
+      padding: 9px 20px;
+      background: #0070f3;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.95rem;
+      white-space: nowrap;
+    }
+    button:hover { background: #0060d3; }
+    .flash {
+      padding: 10px 14px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 0.9rem;
+    }
+    .flash.success { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+    .flash.error   { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th { text-align: left; padding: 8px 10px; background: #f9fafb; color: #555; font-weight: 600; border-bottom: 2px solid #eee; }
+    td { padding: 10px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    .badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 12px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    .badge-ready { background: #d1fae5; color: #065f46; }
+    .badge-other { background: #fef3c7; color: #92400e; }
+    .url-cell { color: #666; font-family: monospace; font-size: 0.8rem; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    a.dl-btn {
+      display: inline-block;
+      padding: 4px 12px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      text-decoration: none;
+      border-radius: 5px;
+      font-size: 0.82rem;
+      font-weight: 500;
+      border: 1px solid #bfdbfe;
+    }
+    a.dl-btn:hover { background: #dbeafe; }
+    .empty { color: #999; font-size: 0.9rem; text-align: center; padding: 24px 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>DBaaS Consumer Workspace Provisioner</h1>
+    <p class="subtitle">Creates KCP workspaces pre-bound to the <code>MongoDBDatabase</code> API.</p>
+
+    <div class="card">
+      <h2>Provision New Workspace</h2>
+      {{if .Success}}<div class="flash success">{{.Success}}</div>{{end}}
+      {{if .Error}}<div class="flash error">{{.Error}}</div>{{end}}
+      <form method="POST" action="/api/workspaces">
+        <div class="form-row">
+          <input type="text" name="name" placeholder="workspace name (e.g. tenant-a)" pattern="[a-z0-9\-]+" required>
+          <button type="submit">Provision</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Consumer Workspaces</h2>
+      {{if .Workspaces}}
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Phase</th>
+            <th>URL</th>
+            <th>Kubeconfig</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Workspaces}}
+          <tr>
+            <td><strong>{{.Name}}</strong></td>
+            <td>
+              <span class="badge {{if eq .Phase "Ready"}}badge-ready{{else}}badge-other{{end}}">
+                {{if .Phase}}{{.Phase}}{{else}}—{{end}}
+              </span>
+            </td>
+            <td class="url-cell" title="{{.URL}}">{{if .URL}}{{.URL}}{{else}}—{{end}}</td>
+            <td>
+              {{if eq .Phase "Ready"}}
+              <a class="dl-btn" href="/api/workspaces/{{.Name}}/kubeconfig" download="{{.Name}}.kubeconfig">
+                ↓ kubeconfig
+              </a>
+              {{else}}—{{end}}
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{else}}
+      <p class="empty">No consumer workspaces yet. Provision one above.</p>
+      {{end}}
+    </div>
+  </div>
+</body>
+</html>
