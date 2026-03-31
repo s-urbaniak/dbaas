@@ -121,7 +121,7 @@ func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (stri
 				return false, nil // not found yet — keep polling
 			}
 			phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
-			u, _, _ := unstructured.NestedString(obj.Object, "status", "url")
+			u, _, _ := unstructured.NestedString(obj.Object, "spec", "URL")
 			if phase == "Ready" && u != "" {
 				wsURL = u
 				return true, nil
@@ -177,7 +177,7 @@ func (p *Provisioner) GetWorkspaceURL(ctx context.Context, name string) (string,
 	if err != nil {
 		return "", fmt.Errorf("getting workspace %q: %w", name, err)
 	}
-	u, _, _ := unstructured.NestedString(obj.Object, "status", "url")
+	u, _, _ := unstructured.NestedString(obj.Object, "spec", "URL")
 	if u == "" {
 		return "", fmt.Errorf("workspace %q has no URL (not ready yet?)", name)
 	}
@@ -201,7 +201,7 @@ func (p *Provisioner) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, erro
 	result := make([]WorkspaceInfo, 0, len(list.Items))
 	for _, item := range list.Items {
 		phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
-		u, _, _ := unstructured.NestedString(item.Object, "status", "url")
+		u, _, _ := unstructured.NestedString(item.Object, "spec", "URL")
 		result = append(result, WorkspaceInfo{Name: item.GetName(), Phase: phase, URL: u})
 	}
 	return result, nil
