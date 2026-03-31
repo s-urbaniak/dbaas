@@ -93,6 +93,30 @@ deploy-kcp: deploy-cert-manager
 	  -n $(HELM_KCP_NS) --create-namespace \
 	  -f $(HELM_KCP_VALUES)
 	$(KUBECTL) apply -f deploy/kcp/admin-cert.yaml
+	# The KCP workspace controller uses kcp-external-admin-kubeconfig-cert (signed by
+	# kcp-front-proxy-client-ca) to call back into kcp:6443/services/initializingworkspaces.
+	# kcp:6443 only trusts kcp-client-ca, causing Unauthorized errors and workspaces
+	# staying in Initializing forever. Fix: combine both CAs into one bundle and patch
+	# the deployment to use it as --client-ca-file.
+	$(MAKE) patch-kcp-client-ca
+
+# Combine kcp-client-ca + kcp-front-proxy-client-ca into a single bundle so the
+# KCP API server trusts both. Must run after cert-manager has issued both CA secrets.
+.PHONY: patch-kcp-client-ca
+patch-kcp-client-ca:
+	@echo "Waiting for kcp-client-ca and kcp-front-proxy-client-ca secrets..."
+	@until $(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-client-ca kcp-front-proxy-client-ca >/dev/null 2>&1; do sleep 2; done
+	@CLIENT_CA=$$($(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-client-ca -o jsonpath='{.data.tls\.crt}' | base64 -d); \
+	 FP_CA=$$($(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-front-proxy-client-ca -o jsonpath='{.data.tls\.crt}' | base64 -d); \
+	 $(KUBECTL) -n $(HELM_KCP_NS) create secret generic kcp-combined-client-ca \
+	   --from-literal="tls.crt=$${CLIENT_CA}"$$'\n'"$${FP_CA}" \
+	   --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	@IDX=$$($(KUBECTL) -n $(HELM_KCP_NS) get deployment kcp -o json | \
+	  python3 -c "import sys,json; vols=json.load(sys.stdin)['spec']['template']['spec']['volumes']; \
+	  [print(i) for i,v in enumerate(vols) if v.get('name')=='kcp-client-ca']"); \
+	 $(KUBECTL) -n $(HELM_KCP_NS) patch deployment kcp --type=json \
+	   -p="[{\"op\":\"replace\",\"path\":\"/spec/template/spec/volumes/$${IDX}/secret/secretName\",\"value\":\"kcp-combined-client-ca\"}]"
+	@echo "✓ KCP deployment patched to trust kcp-front-proxy-client-ca for client auth"
 
 undeploy-kcp:
 	$(HELM) uninstall kcp -n $(HELM_KCP_NS) || true
@@ -170,6 +194,21 @@ create-sync-agent-secret:
 	@rm -f /tmp/kcp-syncagent.kubeconfig
 	@echo "✓ kcp-syncagent-kubeconfig secret created in namespace $(HELM_AGENT_NS)"
 
+# Create the provisioner's KCP kubeconfig secret inside the cluster.
+# Same as create-sync-agent-secret but scoped to root:consumers (the provisioner
+# lists and creates workspaces there) with in-cluster server URL.
+.PHONY: create-provisioner-secret
+create-provisioner-secret:
+	cp $(KCP_KUBECONFIG) /tmp/kcp-provisioner.kubeconfig
+	KUBECONFIG=/tmp/kcp-provisioner.kubeconfig $(KUBECTL) config set-cluster \
+	  $$(KUBECONFIG=/tmp/kcp-provisioner.kubeconfig $(KUBECTL) config view -o jsonpath='{.clusters[0].name}') \
+	  --server=https://kcp-front-proxy.kcp.svc.cluster.local:8443/clusters/root
+	$(KUBECTL) create secret generic kcp-admin-kubeconfig \
+	  --from-file=kubeconfig=/tmp/kcp-provisioner.kubeconfig \
+	  --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	@rm -f /tmp/kcp-provisioner.kubeconfig
+	@echo "✓ kcp-admin-kubeconfig secret created in default namespace"
+
 .PHONY: deploy-sync-agent undeploy-sync-agent
 deploy-sync-agent: helm-repos create-sync-agent-secret
 	$(HELM) upgrade --install api-syncagent $(HELM_AGENT_CHART) \
@@ -225,15 +264,12 @@ deploy-phase1: deploy-kcp apply-crds deploy-kro
 	@echo "═══════════════════════════════════════════════════════"
 
 .PHONY: deploy-phase2
-deploy-phase2: get-kcp-kubeconfig bootstrap-kcp-workspaces deploy-sync-agent ko-apply
+deploy-phase2: get-kcp-kubeconfig bootstrap-kcp-workspaces deploy-sync-agent create-provisioner-secret ko-apply
 	@echo ""
 	@echo "═══════════════════════════════════════════════════════"
 	@echo "  Phase 2 complete (workspaces, sync-agent, controllers)."
 	@echo ""
 	@echo "  Expose the provisioner:"
-	@echo "    kubectl create secret generic kcp-admin-kubeconfig \\"
-	@echo "      --from-file=kubeconfig=$(KCP_KUBECONFIG)"
-	@echo "    kubectl rollout restart deployment/dbaas-provisioner"
 	@echo "    kubectl port-forward svc/dbaas-provisioner 8090"
 	@echo "    → open http://localhost:8090"
 	@echo "═══════════════════════════════════════════════════════"
