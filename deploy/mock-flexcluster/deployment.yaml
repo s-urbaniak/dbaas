@@ -54,7 +54,6 @@ spec:
       containers:
         - name: controller
           image: ko://github.com/s-urbaniak/dbaas/cmd/mock-flexcluster
-          args: ["--leader-elect=false"]
           resources:
             requests:
               cpu: 10m
