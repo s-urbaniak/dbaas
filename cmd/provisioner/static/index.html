@@ -4,138 +4,111 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DBaaS Provisioner</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f0f2f5;
-      margin: 0;
-      padding: 40px 20px;
-      color: #1a1a2e;
-    }
-    .container { max-width: 860px; margin: 0 auto; }
-    h1 { font-size: 1.6rem; margin-bottom: 4px; }
-    .subtitle { color: #666; margin-bottom: 32px; font-size: 0.9rem; }
-    .card {
-      background: white;
-      border-radius: 8px;
-      padding: 24px;
-      margin-bottom: 24px;
-      box-shadow: 0 1px 4px rgba(0,0,0,.08);
-    }
-    h2 { font-size: 1rem; margin: 0 0 16px; color: #333; }
-    .form-row { display: flex; gap: 10px; }
-    input[type=text] {
-      flex: 1;
-      padding: 9px 12px;
-      border: 1px solid #d0d5dd;
-      border-radius: 6px;
-      font-size: 0.95rem;
-      outline: none;
-    }
-    input[type=text]:focus { border-color: #0070f3; box-shadow: 0 0 0 3px rgba(0,112,243,.1); }
-    button {
-      padding: 9px 20px;
-      background: #0070f3;
-      color: white;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 0.95rem;
-      white-space: nowrap;
-    }
-    button:hover { background: #0060d3; }
-    .flash {
-      padding: 10px 14px;
-      border-radius: 6px;
-      margin-bottom: 16px;
-      font-size: 0.9rem;
-    }
-    .flash.success { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
-    .flash.error   { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-    th { text-align: left; padding: 8px 10px; background: #f9fafb; color: #555; font-weight: 600; border-bottom: 2px solid #eee; }
-    td { padding: 10px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
-    tr:last-child td { border-bottom: none; }
-    .badge {
-      display: inline-block;
-      padding: 2px 9px;
-      border-radius: 12px;
-      font-size: 0.78rem;
-      font-weight: 600;
-    }
-    .badge-ready { background: #d1fae5; color: #065f46; }
-    .badge-other { background: #fef3c7; color: #92400e; }
-    .url-cell { color: #666; font-family: monospace; font-size: 0.8rem; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    a.dl-btn {
-      display: inline-block;
-      padding: 4px 12px;
-      background: #eff6ff;
-      color: #1d4ed8;
-      text-decoration: none;
-      border-radius: 5px;
-      font-size: 0.82rem;
-      font-weight: 500;
-      border: 1px solid #bfdbfe;
-    }
-    a.dl-btn:hover { background: #dbeafe; }
-    .empty { color: #999; font-size: 0.9rem; text-align: center; padding: 24px 0; }
-  </style>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 </head>
-<body>
-  <div class="container">
-    <h1>DBaaS Consumer Workspace Provisioner</h1>
-    <p class="subtitle">Creates KCP workspaces pre-bound to the <code>MongoDBDatabase</code> API.</p>
+<body class="bg-light py-5">
+  <div class="container" style="max-width:860px">
+    <h1 class="h4 mb-1">DBaaS Consumer Workspace Provisioner</h1>
+    <p class="text-muted small mb-4">Creates KCP workspaces pre-bound to the <code>MongoDBDatabase</code> API.</p>
 
-    <div class="card">
-      <h2>Provision New Workspace</h2>
-      {{if .Success}}<div class="flash success">{{.Success}}</div>{{end}}
-      {{if .Error}}<div class="flash error">{{.Error}}</div>{{end}}
-      <form method="POST" action="/api/workspaces">
-        <div class="form-row">
-          <input type="text" name="name" placeholder="workspace name (e.g. tenant-a)" pattern="[a-z0-9\-]+" required>
-          <button type="submit">Provision</button>
-        </div>
-      </form>
+    <div class="card mb-4">
+      <div class="card-body">
+        <h2 class="h6 mb-3">Provision New Workspace</h2>
+        {{if .Success}}<div class="alert alert-success py-2">{{.Success}}</div>{{end}}
+        {{if .Error}}<div class="alert alert-danger py-2">{{.Error}}</div>{{end}}
+        <form method="POST" action="/api/workspaces">
+          <div class="input-group">
+            <input type="text" class="form-control" name="name"
+                   placeholder="workspace name (e.g. tenant-a)" pattern="[a-z0-9\-]+" required>
+            <button class="btn btn-primary" type="submit">Provision</button>
+          </div>
+        </form>
+      </div>
     </div>
 
     <div class="card">
-      <h2>Consumer Workspaces</h2>
-      {{if .Workspaces}}
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Phase</th>
-            <th>URL</th>
-            <th>Kubeconfig</th>
-          </tr>
-        </thead>
-        <tbody>
-          {{range .Workspaces}}
-          <tr>
-            <td><strong>{{.Name}}</strong></td>
-            <td>
-              <span class="badge {{if eq .Phase "Ready"}}badge-ready{{else}}badge-other{{end}}">
-                {{if .Phase}}{{.Phase}}{{else}}—{{end}}
-              </span>
-            </td>
-            <td class="url-cell" title="{{.URL}}">{{if .URL}}{{.URL}}{{else}}—{{end}}</td>
-            <td>
-              {{if eq .Phase "Ready"}}
-              <a class="dl-btn" href="/api/workspaces/{{.Name}}/kubeconfig" download="{{.Name}}.kubeconfig">
-                ↓ kubeconfig
-              </a>
-              {{else}}—{{end}}
-            </td>
-          </tr>
-          {{end}}
-        </tbody>
-      </table>
-      {{else}}
-      <p class="empty">No consumer workspaces yet. Provision one above.</p>
-      {{end}}
+      <div class="card-body">
+        <h2 class="h6 mb-3">Consumer Workspaces</h2>
+        {{if .Workspaces}}
+        <table class="table table-hover table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Name</th>
+              <th>Phase</th>
+              <th>Databases</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range .Workspaces}}
+            <tr {{if eq .Phase "Terminating"}}class="ws-transient table-secondary"{{end}}>
+              <td><strong>{{.Name}}</strong></td>
+              <td>
+                {{if eq .Phase "Terminating"}}
+                <span class="badge bg-secondary d-inline-flex align-items-center gap-1">
+                  <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                  Terminating
+                </span>
+                {{else if eq .Phase "Ready"}}
+                <span class="badge bg-success">Ready</span>
+                {{else}}
+                <span class="badge bg-warning text-dark ws-transient">
+                  <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                  {{if .Phase}}{{.Phase}}{{else}}—{{end}}
+                </span>
+                {{end}}
+              </td>
+              <td>{{.DatabaseCount}}</td>
+              <td>
+                <div class="d-flex gap-2">
+                  {{if eq .Phase "Ready"}}
+                  <a class="btn btn-sm btn-outline-primary"
+                     href="/api/workspaces/{{.Name}}/kubeconfig"
+                     download="{{.Name}}.kubeconfig">↓ kubeconfig</a>
+                  {{end}}
+                  <button class="btn btn-sm btn-outline-danger"
+                          {{if eq .Phase "Terminating"}}disabled{{else}}data-bs-toggle="modal" data-bs-target="#del-{{.Name}}"{{end}}>Delete</button>
+                </div>
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{else}}
+        <p class="text-muted small text-center py-4 mb-0">No consumer workspaces yet. Provision one above.</p>
+        {{end}}
+      </div>
     </div>
   </div>
+
+  {{range .Workspaces}}
+  <div class="modal fade" id="del-{{.Name}}" tabindex="-1" aria-labelledby="del-{{.Name}}-label" aria-hidden="true">
+    <div class="modal-dialog modal-sm">
+      <div class="modal-content">
+        <form method="POST" action="/api/workspaces/{{.Name}}/delete">
+          <div class="modal-header">
+            <h5 class="modal-title" id="del-{{.Name}}-label">Delete workspace</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            Delete <strong>{{.Name}}</strong>? This cannot be undone.
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  {{end}}
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    // Auto-refresh every 3 s while any workspace is in a transient phase.
+    if (document.querySelector('.ws-transient')) {
+      setTimeout(() => location.reload(), 3000);
+    }
+  </script>
 </body>
 </html>

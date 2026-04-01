@@ -533,6 +533,41 @@ hostname as a SAN (see note 1).
 
 ---
 
+## Workspace deletion and cascade behaviour
+
+Deleting a workspace via the provisioner UI (or `DELETE /api/workspaces/{name}`)
+issues a single `DELETE` on the `tenancy.kcp.io/v1alpha1 Workspace` object. KCP
+garbage-collects everything that lives inside the workspace, so this has the
+following cascade effect:
+
+- The `APIBinding` (`dbaas`) inside the workspace is deleted.
+- All `MongoDBDatabase` resources the tenant created inside the workspace are deleted.
+
+**Atlas cluster orphan risk**
+
+The sync agent mirrors each `MongoDBDatabase` to the physical cluster, and kro
+creates a child `FlexCluster` (or `MongoDB`) from it. The mock controllers
+reconcile those children and set status, but they do not own any real cloud
+infrastructure in this PoC. In a production system where the controller
+provisions a real Atlas cluster, workspace deletion could orphan the cloud
+resource:
+
+1. KCP deletes the `MongoDBDatabase` in the tenant workspace.
+2. The sync agent propagates the deletion to the physical cluster.
+3. The controller must handle the `MongoDBDatabase` deletion (finalizer) and
+   deprovision the Atlas cluster **before** it is removed.
+
+If KCP tears down the workspace faster than the controller can reconcile the
+deletion, or if the controller crashes during that window, the Atlas cluster is
+left running and billing without any Kubernetes object tracking it.
+
+Mitigation in a production deployment: add a finalizer to every `MongoDBDatabase`
+managed by a real controller, and ensure the workspace deletion waits for the
+finalizer to be removed (i.e. the controller deprovisions the cloud resource
+first).
+
+---
+
 ## Design notes
 
 See [`dbaas.md`](dbaas.md) for the full design document, including:

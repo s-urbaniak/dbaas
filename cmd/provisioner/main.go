@@ -79,6 +79,7 @@ func main() {
 	mux.HandleFunc("GET /", handleIndex(prov))
 	mux.HandleFunc("POST /api/workspaces", handleCreateWorkspace(prov))
 	mux.HandleFunc("GET /api/workspaces/{name}/kubeconfig", handleKubeconfig(prov))
+	mux.HandleFunc("POST /api/workspaces/{name}/delete", handleDeleteWorkspace(prov))
 
 	slog.Info("starting provisioner", "addr", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
@@ -121,6 +122,17 @@ func handleCreateWorkspace(prov *provisioner.Provisioner) http.HandlerFunc {
 			return
 		}
 		http.Redirect(w, r, "/?success="+url.QueryEscape("Workspace "+name+" provisioned successfully"), http.StatusSeeOther)
+	}
+}
+
+func handleDeleteWorkspace(prov *provisioner.Provisioner) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.PathValue("name")
+		if err := prov.DeleteWorkspace(r.Context(), name); err != nil {
+			http.Redirect(w, r, "/?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/?success="+url.QueryEscape("Workspace "+name+" deleted"), http.StatusSeeOther)
 	}
 }
 

@@ -33,6 +33,16 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
+// IsTransientPhase reports whether the given phase string represents a workspace
+// that is not yet in a stable end-state (Ready or fully deleted).
+func IsTransientPhase(phase string) bool {
+	switch phase {
+	case "Ready", "":
+		return false
+	}
+	return true
+}
+
 var (
 	workspaceGVR = schema.GroupVersionResource{
 		Group:    "tenancy.kcp.io",
@@ -43,6 +53,11 @@ var (
 		Group:    "apis.kcp.io",
 		Version:  "v1alpha1",
 		Resource: "apibindings",
+	}
+	mongodbDatabaseGVR = schema.GroupVersionResource{
+		Group:    "kro.run",
+		Version:  "v1alpha1",
+		Resource: "mongodbdatabases",
 	}
 )
 
@@ -60,9 +75,10 @@ type Provisioner struct {
 
 // WorkspaceInfo holds display information about a consumer workspace.
 type WorkspaceInfo struct {
-	Name  string
-	Phase string
-	URL   string
+	Name          string
+	Phase         string
+	URL           string
+	DatabaseCount int
 }
 
 // kcpBaseURL strips the /clusters/... path from a KCP server URL, returning just the host+port.
@@ -202,9 +218,51 @@ func (p *Provisioner) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, erro
 	for _, item := range list.Items {
 		phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
 		u, _, _ := unstructured.NestedString(item.Object, "spec", "URL")
-		result = append(result, WorkspaceInfo{Name: item.GetName(), Phase: phase, URL: u})
+		if item.GetDeletionTimestamp() != nil {
+			phase = "Terminating"
+		}
+		info := WorkspaceInfo{Name: item.GetName(), Phase: phase, URL: u}
+		if phase == "Ready" {
+			info.DatabaseCount = p.countDatabases(ctx, p.ConsumersWorkspace+":"+item.GetName())
+		}
+		result = append(result, info)
 	}
 	return result, nil
+}
+
+// countDatabases returns the number of MongoDBDatabase resources in the given workspace.
+// Returns 0 on any error (e.g. workspace not yet fully initialised).
+func (p *Provisioner) countDatabases(ctx context.Context, wsPath string) int {
+	cfg, err := p.configForWorkspace(wsPath)
+	if err != nil {
+		return 0
+	}
+	client, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return 0
+	}
+	list, err := client.Resource(mongodbDatabaseGVR).Namespace("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0
+	}
+	return len(list.Items)
+}
+
+// DeleteWorkspace deletes a consumer workspace under ConsumersWorkspace and
+// waits until the workspace is fully removed from the API.
+func (p *Provisioner) DeleteWorkspace(ctx context.Context, name string) error {
+	consumersCfg, err := p.configForWorkspace(p.ConsumersWorkspace)
+	if err != nil {
+		return err
+	}
+	consumersClient, err := dynamic.NewForConfig(consumersCfg)
+	if err != nil {
+		return fmt.Errorf("creating consumers dynamic client: %w", err)
+	}
+	if err := consumersClient.Resource(workspaceGVR).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+		return fmt.Errorf("deleting workspace %q: %w", name, err)
+	}
+	return nil
 }
 
 // KubeconfigBytes generates a kubeconfig YAML for the given workspace URL,
