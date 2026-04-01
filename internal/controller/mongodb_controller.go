@@ -21,18 +21,13 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-)
 
-var mongoDBGVK = schema.GroupVersionKind{
-	Group:   "mongodb.com",
-	Version: "v1",
-	Kind:    "MongoDB",
-}
+	mckv1 "github.com/s-urbaniak/dbaas/api/mck/v1"
+)
 
 // MongoDBReconciler mock-reconciles mongodb.com/v1 MongoDB resources.
 // It sets status.phase=Running and a Ready condition to simulate a real MCK operator.
@@ -43,20 +38,17 @@ type MongoDBReconciler struct {
 func (r *MongoDBReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log.FromContext(ctx).Info("reconciling MongoDB", "name", req.NamespacedName)
 
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(mongoDBGVK)
+	obj := &mckv1.MongoDB{}
 	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	version, _, _ := unstructured.NestedString(obj.Object, "spec", "version")
-
 	patch := client.MergeFrom(obj.DeepCopy())
-	_ = unstructured.SetNestedField(obj.Object, "Running", "status", "phase")
-	_ = unstructured.SetNestedField(obj.Object, version, "status", "version")
-	_ = unstructured.SetNestedSlice(obj.Object, []interface{}{
+	obj.Status.Phase = "Running"
+	obj.Status.Version = obj.Spec.Version
+	obj.Status.Conditions = []metav1.Condition{
 		readyCondition("Mock MCK MongoDB is running"),
-	}, "status", "conditions")
+	}
 
 	if err := r.Status().Patch(ctx, obj, patch); err != nil {
 		return ctrl.Result{}, fmt.Errorf("patching MongoDB status: %w", err)
@@ -65,18 +57,16 @@ func (r *MongoDBReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 }
 
 func (r *MongoDBReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(mongoDBGVK)
-	return ctrl.NewControllerManagedBy(mgr).For(u).Complete(r)
+	return ctrl.NewControllerManagedBy(mgr).For(&mckv1.MongoDB{}).Complete(r)
 }
 
-// readyCondition returns a map representing a Kubernetes Ready=True condition.
-func readyCondition(message string) map[string]interface{} {
-	return map[string]interface{}{
-		"type":               "Ready",
-		"status":             "True",
-		"reason":             "Reconciled",
-		"message":            message,
-		"lastTransitionTime": time.Now().UTC().Format(time.RFC3339),
+// readyCondition returns a metav1.Condition representing a Ready=True condition.
+func readyCondition(message string) metav1.Condition {
+	return metav1.Condition{
+		Type:               "Ready",
+		Status:             metav1.ConditionTrue,
+		Reason:             "Reconciled",
+		Message:            message,
+		LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 	}
 }

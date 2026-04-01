@@ -21,18 +21,13 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-)
 
-var flexClusterGVK = schema.GroupVersionKind{
-	Group:   "atlas.generated.mongodb.com",
-	Version: "v1",
-	Kind:    "FlexCluster",
-}
+	atlasv1 "github.com/s-urbaniak/dbaas/api/atlas/v1"
+)
 
 // FlexClusterReconciler mock-reconciles atlas.generated.mongodb.com/v1 FlexCluster resources.
 // It sets the IDLE stateName and a Ready condition to simulate a real Atlas operator.
@@ -43,24 +38,27 @@ type FlexClusterReconciler struct {
 func (r *FlexClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log.FromContext(ctx).Info("reconciling FlexCluster", "name", req.NamespacedName)
 
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(flexClusterGVK)
+	obj := &atlasv1.FlexCluster{}
 	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	stateName := "IDLE"
 	patch := client.MergeFrom(obj.DeepCopy())
-	_ = unstructured.SetNestedField(obj.Object, "IDLE", "status", "v20250312", "stateName")
-	_ = unstructured.SetNestedSlice(obj.Object, []interface{}{
+	obj.Status.V20250312 = &atlasv1.FlexClusterStatusV20250312{
+		StateName: &stateName,
+	}
+	conditions := []metav1.Condition{
 		readyCondition("Mock Atlas FlexCluster is idle"),
-		map[string]interface{}{
-			"type":               "State",
-			"status":             "True",
-			"reason":             "IDLE",
-			"message":            "Mock FlexCluster stateName=IDLE",
-			"lastTransitionTime": time.Now().UTC().Format(time.RFC3339),
+		{
+			Type:               "State",
+			Status:             metav1.ConditionTrue,
+			Reason:             "IDLE",
+			Message:            "Mock FlexCluster stateName=IDLE",
+			LastTransitionTime: metav1.NewTime(time.Now().UTC()),
 		},
-	}, "status", "conditions")
+	}
+	obj.Status.Conditions = &conditions
 
 	if err := r.Status().Patch(ctx, obj, patch); err != nil {
 		return ctrl.Result{}, fmt.Errorf("patching FlexCluster status: %w", err)
@@ -69,7 +67,5 @@ func (r *FlexClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 }
 
 func (r *FlexClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(flexClusterGVK)
-	return ctrl.NewControllerManagedBy(mgr).For(u).Complete(r)
+	return ctrl.NewControllerManagedBy(mgr).For(&atlasv1.FlexCluster{}).Complete(r)
 }

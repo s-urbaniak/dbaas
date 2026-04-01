@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	atlasv1 "github.com/s-urbaniak/dbaas/api/atlas/v1"
 	"github.com/s-urbaniak/dbaas/internal/controller"
 )
 
@@ -42,6 +43,7 @@ func main() {
 
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
+	_ = atlasv1.AddToScheme(scheme)
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                  scheme,
