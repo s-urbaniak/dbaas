@@ -29,6 +29,9 @@ HELM_AGENT_NS    := kcp
 # For kind use "kind.local"; for a local registry use e.g. "localhost:5001".
 KO_DOCKER_REPO ?= kind.local
 
+# kind cluster name — ko needs this when the cluster is not named "kind".
+KIND_CLUSTER_NAME ?= dbaas
+
 # Target platform for ko builds. Defaults to the host architecture so images
 # load correctly into a local kind cluster (arm64 on Apple Silicon, amd64 elsewhere).
 KO_PLATFORMS ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
@@ -238,13 +241,15 @@ undeploy-sync-agent:
 # ── Mock controllers + provisioner ─────────────────────────────────────────────
 .PHONY: ko-build ko-apply
 ko-build:
-	KO_DOCKER_REPO=$(KO_DOCKER_REPO) $(KO) build --platform=$(KO_PLATFORMS) \
+	KO_DOCKER_REPO=$(KO_DOCKER_REPO) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) \
+	  $(KO) build --platform=$(KO_PLATFORMS) \
 	  ./cmd/mock-mongodb/ \
 	  ./cmd/mock-flexcluster/ \
 	  ./cmd/provisioner/
 
 ko-apply:
-	KO_DOCKER_REPO=$(KO_DOCKER_REPO) $(KO) apply --platform=$(KO_PLATFORMS) \
+	KO_DOCKER_REPO=$(KO_DOCKER_REPO) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) \
+	  $(KO) apply --platform=$(KO_PLATFORMS) \
 	  -f deploy/mock-mongodb/ \
 	  -f deploy/mock-flexcluster/ \
 	  -f deploy/provisioner/
