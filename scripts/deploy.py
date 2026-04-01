@@ -1,53 +1,138 @@
 #!/usr/bin/env python3
 """
-deploy.py — sequential deploy pipeline with a persistent status bar at the bottom
-of the terminal.
+deploy.py — sequential deploy pipeline with a pinned bottom status bar.
 
 Usage:
   deploy.py --step LABEL CMD [--step LABEL CMD ...]
 
-Each --step defines one pipeline stage; stages execute in order. Output from
-each command scrolls above the bar. The bar shows:
-  ✓ label        green   (completed)
-  ⠋ label        bold    (current, animated spinner)
-    label        gray    (pending)
+The terminal is split into two regions:
+  - rows 1 .. h-1  scrolling output area (subprocess stdout/stderr)
+  - row  h         pipeline status bar   (never scrolls away)
+
+A full-width green / red divider is printed at the end of each step.
 """
 
 import argparse
+import atexit
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import threading
 import time
 
-# ── ANSI escape helpers ───────────────────────────────────────────────────────
+# ── ANSI helpers ──────────────────────────────────────────────────────────────
 BOLD  = "\033[1m"
 GRAY  = "\033[90m"
 GREEN = "\033[32m"
 RED   = "\033[31m"
 RESET = "\033[0m"
-ERASE = "\033[2K"   # erase entire current line
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
+# ── Shared state ──────────────────────────────────────────────────────────────
+_steps: list[tuple[str, str]] = []
+_current   = [0]
+_spin_idx  = [0]
+_lock      = threading.Lock()
+_scroll_on = [False]
 
-def render_pipeline(steps, current, frame):
-    """Return the pipeline bar string (no trailing newline)."""
+
+def _size() -> tuple[int, int]:
+    ts = shutil.get_terminal_size((80, 24))
+    return ts.columns, ts.lines
+
+
+def _render_bar() -> str:
     parts = []
-    for i, (label, _) in enumerate(steps):
-        if i < current:
+    for i, (label, _) in enumerate(_steps):
+        if i < _current[0]:
             parts.append(f"{GREEN}✓ {label}{RESET}")
-        elif i == current:
-            parts.append(f"{BOLD}{SPINNER_FRAMES[frame]} {label}{RESET}")
+        elif i == _current[0]:
+            parts.append(f"{BOLD}{SPINNER_FRAMES[_spin_idx[0]]} {label}{RESET}")
         else:
             parts.append(f"{GRAY}{label}{RESET}")
     return "  " + f" {GRAY}→{RESET} ".join(parts)
 
 
-def main():
+# ── Terminal scroll-region management ─────────────────────────────────────────
+
+def _enter_scroll_mode() -> None:
+    _, h = _size()
+    # Save the current cursor position (start of the output area).
+    sys.stdout.write("\033[s")
+    # Restrict scrolling to rows 1 .. h-1; row h is the bar and never scrolls.
+    sys.stdout.write(f"\033[1;{h - 1}r")
+    # Write the initial bar at row h.
+    sys.stdout.write(f"\033[{h};1H\033[2K{_render_bar()}")
+    # Restore cursor to the output area.
+    sys.stdout.write("\033[u")
+    sys.stdout.flush()
+    _scroll_on[0] = True
+    atexit.register(_exit_scroll_mode)
+
+
+def _exit_scroll_mode() -> None:
+    if not _scroll_on[0]:
+        return
+    _, h = _size()
+    # Reset scroll region to the full terminal.
+    sys.stdout.write("\033[r")
+    # Move to the last line and emit a newline so the shell prompt appears below.
+    sys.stdout.write(f"\033[{h};1H\n")
+    sys.stdout.flush()
+    _scroll_on[0] = False
+
+
+def _handle_resize(sig: int, frame: object) -> None:
+    """Update the scroll region and redraw the bar after a terminal resize."""
+    with _lock:
+        _, h = _size()
+        sys.stdout.write(f"\033[1;{h - 1}r")
+        _refresh_bar()
+
+
+# ── Bar / output primitives (call with _lock held) ────────────────────────────
+
+def _refresh_bar() -> None:
+    """Redraw the bar at the bottom line; save/restore the cursor."""
+    _, h = _size()
+    sys.stdout.write(f"\033[s\033[{h};1H\033[2K{_render_bar()}\033[u")
+    sys.stdout.flush()
+
+
+def _write_line(line: str) -> None:
+    """Write one output line into the scroll region, then refresh the bar."""
+    sys.stdout.write(line + "\n")
+    # Save the new cursor position (after the line) before jumping to the bar.
+    sys.stdout.write("\033[s")
+    _, h = _size()
+    sys.stdout.write(f"\033[{h};1H\033[2K{_render_bar()}\033[u")
+    sys.stdout.flush()
+
+
+def _write_divider(color: str) -> None:
+    """Print a full-width horizontal rule in the scroll region."""
+    w, _ = _size()
+    _write_line(f"{color}{'━' * w}{RESET}")
+
+
+# ── Background spinner ────────────────────────────────────────────────────────
+
+def _spinner_loop(stop: threading.Event) -> None:
+    while not stop.is_set():
+        time.sleep(0.1)
+        with _lock:
+            _spin_idx[0] = (_spin_idx[0] + 1) % len(SPINNER_FRAMES)
+            _refresh_bar()
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run a sequential deploy pipeline with a persistent pipeline bar."
+        description="Run a sequential deploy pipeline with a pinned status bar."
     )
     parser.add_argument(
         "--step",
@@ -55,61 +140,40 @@ def main():
         metavar=("LABEL", "CMD"),
         action="append",
         required=True,
-        help="Add a pipeline stage: LABEL is the display name, CMD is the shell command.",
     )
     args = parser.parse_args()
-    steps = args.step  # list of [label, cmd]
+    _steps[:] = args.step
 
-    lock = threading.Lock()
-    spinner_idx = [0]
-    current_step = [0]
-    stop_event = threading.Event()
-    active_proc = [None]
+    stop       = threading.Event()
+    active_proc: list[subprocess.Popen | None] = [None]
 
-    def _write_bar():
-        """Must be called with lock held."""
-        bar = render_pipeline(steps, current_step[0], spinner_idx[0])
-        sys.stdout.write(f"\r{ERASE}{bar}")
-        sys.stdout.flush()
-
-    def spinner_thread():
-        while not stop_event.is_set():
-            time.sleep(0.1)
-            with lock:
-                spinner_idx[0] = (spinner_idx[0] + 1) % len(SPINNER_FRAMES)
-                _write_bar()
-
-    def handle_interrupt(signum, frame):
-        stop_event.set()
-        proc = active_proc[0]
-        if proc is not None:
+    def on_interrupt(sig: int, frame: object) -> None:
+        stop.set()
+        p = active_proc[0]
+        if p:
             try:
-                proc.terminate()
+                p.terminate()
             except OSError:
                 pass
-        with lock:
-            sys.stdout.write(f"\r{ERASE}{RED}✗ Interrupted{RESET}\n")
-            sys.stdout.flush()
+        _exit_scroll_mode()
         sys.exit(130)
 
-    signal.signal(signal.SIGINT, handle_interrupt)
+    signal.signal(signal.SIGINT,  on_interrupt)
+    signal.signal(signal.SIGWINCH, _handle_resize)
 
-    # Print initial blank line so the first pipeline bar doesn't sit on the
-    # prompt line, then render the bar.
+    # Ensure we start on a fresh line, then enter scroll mode.
     sys.stdout.write("\n")
-    with lock:
-        _write_bar()
+    _enter_scroll_mode()
 
-    t = threading.Thread(target=spinner_thread, daemon=True)
-    t.start()
+    spinner = threading.Thread(target=_spinner_loop, args=(stop,), daemon=True)
+    spinner.start()
 
     try:
-        for i, (label, cmd) in enumerate(steps):
-            with lock:
-                current_step[0] = i
-                _write_bar()
+        for i, (label, cmd) in enumerate(_steps):
+            with _lock:
+                _current[0] = i
+                _refresh_bar()
 
-            # Strip recursive-make flags so sub-make calls work correctly.
             env = os.environ.copy()
             env.pop("MAKEFLAGS", None)
             env.pop("MAKELEVEL", None)
@@ -125,37 +189,36 @@ def main():
             )
             active_proc[0] = proc
 
-            for raw_line in proc.stdout:
-                line = raw_line.rstrip("\n")
-                with lock:
-                    # Erase bar → print output line → reprint bar below it.
-                    bar = render_pipeline(steps, current_step[0], spinner_idx[0])
-                    sys.stdout.write(f"\r{ERASE}{line}\n{ERASE}{bar}")
-                    sys.stdout.flush()
+            for raw in proc.stdout:
+                with _lock:
+                    _write_line(raw.rstrip("\n"))
 
             proc.wait()
             active_proc[0] = None
 
             if proc.returncode != 0:
-                with lock:
-                    sys.stdout.write(
-                        f"\r{ERASE}"
+                with _lock:
+                    _write_divider(RED)
+                    _write_line(
                         f"{RED}✗ Step '{label}' failed "
-                        f"(exit {proc.returncode}){RESET}\n"
+                        f"(exit {proc.returncode}){RESET}"
                     )
-                    sys.stdout.flush()
+                stop.set()
+                _exit_scroll_mode()
                 sys.exit(proc.returncode)
 
-        # All steps done — render final bar with all green, then newline.
-        stop_event.set()
-        with lock:
-            current_step[0] = len(steps)
-            bar = render_pipeline(steps, current_step[0], 0)
-            sys.stdout.write(f"\r{ERASE}{bar}\n")
-            sys.stdout.flush()
+            with _lock:
+                _write_divider(GREEN)
+
+        # All steps succeeded.
+        stop.set()
+        with _lock:
+            _current[0] = len(_steps)
+            _refresh_bar()
+        _exit_scroll_mode()
 
     finally:
-        stop_event.set()
+        stop.set()
 
 
 if __name__ == "__main__":
