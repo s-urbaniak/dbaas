@@ -90,6 +90,8 @@ Physical Kubernetes Cluster (kind / minikube)
 │   ├── mock-mongodb/       # RBAC + Deployment
 │   ├── mock-flexcluster/   # RBAC + Deployment
 │   └── provisioner/        # Deployment + Service
+├── scripts/
+│   └── deploy.py           # pipeline deploy UI (spinner + status bar)
 ├── hack/
 │   └── boilerplate.go.txt
 ├── dbaas.md                # detailed design doc with rationale
@@ -121,44 +123,29 @@ cert-manager is installed automatically by `make deploy-kcp` — no manual step 
 kind create cluster --name dbaas
 ```
 
-### 2 — Phase 1: infrastructure (no port-forward needed)
+### 2 — Deploy everything
 
 ```bash
-make deploy-phase1
+make deploy
 ```
 
-This installs: cert-manager → KCP → MCK + Atlas CRDs → kro + ResourceGraphDefinition.
+This runs the full pipeline in one shot — no port-forward required at any point:
 
-**Ordering constraints:**
+```
+cert-manager → kcp → crds → kro → kubeconfig → bootstrap → sync-agent → provisioner → controllers
+```
+
+A status bar at the bottom of the terminal tracks progress with a spinner and
+shows each stage turning green as it completes.
+
+**Ordering constraints enforced by the pipeline:**
 - cert-manager must be ready before KCP — KCP uses cert-manager `Certificate` and `Issuer` resources for its entire TLS PKI.
 - kro must complete before the sync agent — kro dynamically creates the `MongoDBDatabase` CRD; the sync agent needs it to exist at startup.
+- KCP workspace bootstrap runs as a Kubernetes Job inside the cluster (against `kcp-front-proxy.kcp.svc.cluster.local:8443`), so no local port-forward is needed.
 
-### 3 — Expose KCP (keep running in a dedicated terminal)
-
-KCP's front-proxy is a `ClusterIP` service, so you need a port-forward to reach it from your host:
-
-```bash
-make kcp-port-forward        # kubectl port-forward -n kcp svc/kcp-front-proxy 6443:443
-```
-
-Leave this running for all subsequent steps.
-
-### 4 — Phase 2: workspaces, sync agent, controllers
+### 3 — Expose the provisioner
 
 ```bash
-make deploy-phase2
-```
-
-This runs: `get-kcp-kubeconfig` → `bootstrap-kcp-workspaces` → `deploy-sync-agent` → `ko-apply`.
-
-### 5 — Expose the provisioner
-
-```bash
-# make the KCP admin kubeconfig available to the provisioner pod
-kubectl create secret generic kcp-admin-kubeconfig \
-  --from-file=kubeconfig=/tmp/kcp-admin.kubeconfig
-
-kubectl rollout restart deployment/dbaas-provisioner
 kubectl port-forward svc/dbaas-provisioner 8090
 ```
 
@@ -299,6 +286,88 @@ not possible; both child resources are always created.
 CEL expressions in `spec.schema.status` can only reference child resource IDs
 (`mckMongoDB`, `atlasFlexCluster`). Neither `schema.*` nor `instance.*` resolves
 to the current instance — both fail with `references unknown identifiers`.
+
+---
+
+## TLS trust relationships
+
+KCP's PKI is managed entirely by cert-manager. The diagram below shows every signing and trust relationship; the numbered notes explain the non-obvious parts.
+
+```
+ CERTIFICATE AUTHORITIES (cert-manager, self-signed, namespace: kcp)
+ ┌─────────────────────────────────────────────────────────────────────────────┐
+ │                                                                             │
+ │  kcp-ca  ─────────────── signs ──────────►  front-proxy serving cert  (1) │
+ │                                              SANs: localhost                │
+ │                                                    kcp-front-proxy          │
+ │                                                    .kcp.svc.cluster.local   │
+ │                                                                             │
+ │  kcp-client-ca                                     (KCP-internal use)       │
+ │                                                                             │
+ │  kcp-front-proxy-client-ca  ── signs ──►  kcp-admin-client-cert       (2) │
+ │                                            CN = kcp-admin                   │
+ │                                            O  = system:kcp:admin            │
+ │                                            usage: client auth               │
+ └─────────────────────────────────────────────────────────────────────────────┘
+
+ TRUST ANCHORS  (--client-ca-file accepted by each server)
+ ┌─────────────────────────────────────────────────────────────────────────────┐
+ │                                                                             │
+ │  KCP front-proxy  (:8443)   trusts  kcp-front-proxy-client-ca              │
+ │                                                                             │
+ │  KCP API server   (:6443)   trusts  kcp-combined-client-ca  ◄── patched (3)│
+ │                                       ├── kcp-client-ca                     │
+ │                                       └── kcp-front-proxy-client-ca         │
+ │                                                                             │
+ └─────────────────────────────────────────────────────────────────────────────┘
+
+ CLIENT CONNECTIONS
+ ┌─────────────────────────────────────────────────────────────────────────────┐
+ │                                                                             │
+ │  host (admin / provisioner)                                                 │
+ │    server  https://localhost:6443  (via port-forward)                       │
+ │    CA      kcp-ca                  (verifies serving cert)            (1)  │
+ │    cert    kcp-admin-client-cert   (authenticates caller)             (2)  │
+ │                │                                                            │
+ │                └──────────────────────────────────► KCP front-proxy :8443  │
+ │                                                                             │
+ │  sync agent pod / provisioner pod                                           │
+ │    server  https://kcp-front-proxy.kcp.svc.cluster.local:8443        (4)  │
+ │    CA      kcp-ca                  (SAN in serving cert — same CA)    (1)  │
+ │    cert    kcp-admin-client-cert   (same cert, no skip-TLS needed)    (2)  │
+ │                │                                                            │
+ │                └──────────────────────────────────► KCP front-proxy :8443  │
+ │                                                                             │
+ └─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**(1) Front-proxy serving cert SANs** — `kcp-values.yaml` adds
+`kcp-front-proxy.kcp.svc.cluster.local` via `extraDNSNames` so that both the
+host (through the port-forward) and in-cluster pods can verify the same serving
+cert with the same `kcp-ca`, without `insecureSkipTLSVerify`.
+
+**(2) Admin client certificate** — `deploy/kcp/admin-cert.yaml` requests a
+cert-manager `Certificate` issued by `kcp-front-proxy-client-issuer` (backed by
+`kcp-front-proxy-client-ca`). The resulting secret `kcp-admin-client-cert` is
+embedded into every kubeconfig. `make get-kcp-kubeconfig` assembles the
+self-contained kubeconfig at `/tmp/kcp-admin.kubeconfig` by inlining the
+`kcp-ca` cert and the `kcp-admin-client-cert` cert+key directly as base64 data
+fields.
+
+**(3) Combined CA patch** — The KCP workspace controller authenticates directly
+to the KCP API server (`kcp:6443/services/initializingworkspaces`) using a cert
+signed by `kcp-front-proxy-client-ca`. By default, `kcp:6443` only trusts
+`kcp-client-ca`, so the controller is rejected with `401 Unauthorized` and all
+workspaces stay stuck in `Initializing`. `make deploy-kcp` runs
+`patch-kcp-client-ca` to fix this: it concatenates both CA PEM blocks into a
+new secret `kcp-combined-client-ca` and patches the KCP `Deployment` to mount
+it as `--client-ca-file`.
+
+**(4) In-cluster kubeconfigs** — Pods cannot reach `localhost:6443`. The sync
+agent and provisioner each receive a copy of the admin kubeconfig with the
+server URL rewritten to the in-cluster front-proxy address. TLS verification
+requires no changes because the serving cert already carries the in-cluster
+hostname as a SAN (see note 1).
 
 ---
 

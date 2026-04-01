@@ -1,0 +1,96 @@
+# Kubernetes Job that bootstraps KCP workspaces from inside the cluster.
+#
+# Eliminates the need for a local `kubectl port-forward` to reach KCP: the Job
+# runs kubectl against https://kcp-front-proxy.kcp.svc.cluster.local:8443 using
+# the same cert-manager-issued admin client certificate that is used by the host
+# kubeconfig.
+#
+# The Job is created by `make bootstrap-kcp-workspaces` after it applies the
+# kcp-bootstrap-scripts ConfigMap (built from deploy/kcp/workspaces.yaml and
+# deploy/kcp/apiexport.yaml). On completion the Job is deleted by the Makefile
+# target (ttlSecondsAfterFinished is a safety net in case deletion fails).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kcp-bootstrap
+  namespace: kcp
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      volumes:
+        - name: kcp-ca
+          secret:
+            secretName: kcp-ca
+        - name: kcp-client-cert
+          secret:
+            secretName: kcp-admin-client-cert
+        - name: bootstrap-scripts
+          configMap:
+            name: kcp-bootstrap-scripts
+      containers:
+        - name: bootstrap
+          image: bitnami/kubectl:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+
+              # Build a kubeconfig that references the mounted cert files directly.
+              # This avoids base64-encoding cert content into the YAML.
+              cat > /tmp/kubeconfig.yaml << 'KUBECONFIG_EOF'
+              apiVersion: v1
+              kind: Config
+              clusters:
+              - name: kcp
+                cluster:
+                  server: https://kcp-front-proxy.kcp.svc.cluster.local:8443/clusters/root
+                  certificate-authority: /etc/kcp-ca/tls.crt
+              users:
+              - name: kcp-admin
+                user:
+                  client-certificate: /etc/kcp-client-cert/tls.crt
+                  client-key: /etc/kcp-client-cert/tls.key
+              contexts:
+              - name: kcp
+                context:
+                  cluster: kcp
+                  user: kcp-admin
+              current-context: kcp
+              KUBECONFIG_EOF
+
+              # Strip leading whitespace introduced by the heredoc indentation.
+              sed -i 's/^              //' /tmp/kubeconfig.yaml
+
+              export KUBECONFIG=/tmp/kubeconfig.yaml
+
+              echo "Applying workspaces to root..."
+              kubectl apply --validate=false -f /scripts/workspaces.yaml
+
+              echo "Waiting for workspace/dbaas-provider to be Ready..."
+              kubectl wait workspace/dbaas-provider \
+                --for=jsonpath='{.status.phase}'=Ready --timeout=120s
+
+              echo "Waiting for workspace/consumers to be Ready..."
+              kubectl wait workspace/consumers \
+                --for=jsonpath='{.status.phase}'=Ready --timeout=120s
+
+              echo "Switching context to root:dbaas-provider..."
+              kubectl config set-cluster kcp \
+                --server=https://kcp-front-proxy.kcp.svc.cluster.local:8443/clusters/root:dbaas-provider
+
+              echo "Applying APIExport to root:dbaas-provider..."
+              kubectl apply --validate=false -f /scripts/apiexport.yaml
+
+              echo "Bootstrap complete."
+          volumeMounts:
+            - name: kcp-ca
+              mountPath: /etc/kcp-ca
+              readOnly: true
+            - name: kcp-client-cert
+              mountPath: /etc/kcp-client-cert
+              readOnly: true
+            - name: bootstrap-scripts
+              mountPath: /scripts
+              readOnly: true

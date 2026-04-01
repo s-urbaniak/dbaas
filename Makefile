@@ -99,6 +99,9 @@ deploy-kcp: deploy-cert-manager
 	# staying in Initializing forever. Fix: combine both CAs into one bundle and patch
 	# the deployment to use it as --client-ca-file.
 	$(MAKE) patch-kcp-client-ca
+	@echo "Waiting for kcp-admin-client-cert to be issued by cert-manager..."
+	@until $(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-admin-client-cert >/dev/null 2>&1; do sleep 2; done
+	@echo "✓ kcp-admin-client-cert ready"
 
 # Combine kcp-client-ca + kcp-front-proxy-client-ca into a single bundle so the
 # KCP API server trusts both. Must run after cert-manager has issued both CA secrets.
@@ -145,17 +148,22 @@ kcp-port-forward:
 	$(KUBECTL) -n $(HELM_KCP_NS) port-forward svc/kcp-front-proxy 6443:8443
 
 # Bootstrap the root:dbaas-provider and root:consumers workspaces in KCP.
-# Must run AFTER deploy-kcp and get-kcp-kubeconfig.
+# Runs as a Kubernetes Job inside the cluster — no local port-forward required.
+# Must run AFTER deploy-kcp (kcp-admin-client-cert secret must exist).
 .PHONY: bootstrap-kcp-workspaces
 bootstrap-kcp-workspaces:
-	KUBECONFIG=$(KCP_KUBECONFIG) $(KUBECTL) apply --validate=false -f deploy/kcp/workspaces.yaml
-	# Create the empty APIExport in root:dbaas-provider so KCP generates the
-	# APIExportEndpointSlice that the sync agent needs at startup.
-	@cp $(KCP_KUBECONFIG) /tmp/kcp-provider.kubeconfig
-	@KUBECONFIG=/tmp/kcp-provider.kubeconfig $(KUBECTL) config set-cluster kcp \
-	  --server=https://localhost:6443/clusters/root:dbaas-provider
-	@KUBECONFIG=/tmp/kcp-provider.kubeconfig $(KUBECTL) apply --validate=false -f deploy/kcp/apiexport.yaml
-	@rm -f /tmp/kcp-provider.kubeconfig
+	# Build ConfigMap from the workspace and APIExport manifests.
+	$(KUBECTL) -n $(HELM_KCP_NS) create configmap kcp-bootstrap-scripts \
+	  --from-file=workspaces.yaml=deploy/kcp/workspaces.yaml \
+	  --from-file=apiexport.yaml=deploy/kcp/apiexport.yaml \
+	  --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	# Delete any previous run before creating a fresh Job.
+	$(KUBECTL) -n $(HELM_KCP_NS) delete job kcp-bootstrap --ignore-not-found
+	$(KUBECTL) apply -f deploy/kcp/bootstrap-job.yaml
+	$(KUBECTL) -n $(HELM_KCP_NS) wait --for=condition=complete \
+	  job/kcp-bootstrap --timeout=180s
+	$(KUBECTL) -n $(HELM_KCP_NS) delete job kcp-bootstrap --ignore-not-found
+	@echo "✓ KCP workspaces bootstrapped"
 
 # ── kro ───────────────────────────────────────────────────────────────────────
 # IMPORTANT: deploy-kro must succeed before deploy-sync-agent.
@@ -235,47 +243,37 @@ ko-apply:
 	  -f deploy/provisioner/
 
 # ── Full deploy sequence ────────────────────────────────────────────────────────
-# Deploying requires a port-forward to KCP mid-way through, so the full sequence
-# is split into two phases:
+# Single target — no port-forward required. The pipeline script renders a status
+# bar at the bottom of the terminal with spinner animation.
 #
-#   Phase 1 (no port-forward needed):
-#     make deploy-phase1
-#       → cert-manager → KCP → CRDs → kro
-#
-#   Then in a separate terminal:
-#     make kcp-port-forward
-#
-#   Phase 2 (port-forward must be running):
-#     make deploy-phase2
-#       → get-kcp-kubeconfig → bootstrap-kcp-workspaces → sync-agent → controllers
-#
-# deploy-phase1 and deploy-phase2 together replace the old one-shot `make deploy`.
+# Individual phase targets (deploy-phase1, deploy-phase2) are kept for manual
+# step-by-step use. kcp-port-forward is available for debugging.
 .PHONY: deploy-phase1
 deploy-phase1: deploy-kcp apply-crds deploy-kro
 	@echo ""
-	@echo "═══════════════════════════════════════════════════════"
 	@echo "  Phase 1 complete (cert-manager, KCP, CRDs, kro)."
-	@echo ""
-	@echo "  Now run in a separate terminal and keep it running:"
-	@echo "    make kcp-port-forward"
-	@echo ""
-	@echo "  Then continue with:"
-	@echo "    make deploy-phase2"
-	@echo "═══════════════════════════════════════════════════════"
+	@echo "  Continue with: make deploy-phase2"
+	@echo "  (No port-forward needed — bootstrap runs as an in-cluster Job)"
 
 .PHONY: deploy-phase2
 deploy-phase2: get-kcp-kubeconfig bootstrap-kcp-workspaces deploy-sync-agent create-provisioner-secret ko-apply
 	@echo ""
-	@echo "═══════════════════════════════════════════════════════"
-	@echo "  Phase 2 complete (workspaces, sync-agent, controllers)."
-	@echo ""
-	@echo "  Expose the provisioner:"
+	@echo "  Phase 2 complete. Expose the provisioner:"
 	@echo "    kubectl port-forward svc/dbaas-provisioner 8090"
 	@echo "    → open http://localhost:8090"
-	@echo "═══════════════════════════════════════════════════════"
 
 .PHONY: deploy
-deploy: deploy-phase1 deploy-phase2
+deploy:
+	@python3 scripts/deploy.py \
+	  --step "cert-manager" "$(MAKE) deploy-cert-manager" \
+	  --step "kcp"          "$(MAKE) deploy-kcp" \
+	  --step "crds"         "$(MAKE) apply-crds" \
+	  --step "kro"          "$(MAKE) deploy-kro" \
+	  --step "kubeconfig"   "$(MAKE) get-kcp-kubeconfig" \
+	  --step "bootstrap"    "$(MAKE) bootstrap-kcp-workspaces" \
+	  --step "sync-agent"   "$(MAKE) deploy-sync-agent" \
+	  --step "provisioner"  "$(MAKE) create-provisioner-secret" \
+	  --step "controllers"  "$(MAKE) ko-apply"
 
 .PHONY: undeploy
 undeploy: undeploy-sync-agent undeploy-kro undeploy-kcp undeploy-cert-manager
