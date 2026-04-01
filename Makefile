@@ -177,7 +177,7 @@ deploy-kro: apply-crds
 	  -n $(HELM_KRO_NS) --create-namespace \
 	  -f $(HELM_KRO_VALUES)
 	@echo "Waiting for kro to be ready..."
-	$(KUBECTL) -n $(HELM_KRO_NS) rollout status deployment/kro --timeout=120s
+	$(KUBECTL) -n $(HELM_KRO_NS) rollout status deployment/kro --timeout=600s
 	$(KUBECTL) apply -f config/kro/mongodatabase-rgd.yaml
 	@echo "✓ kro deployed and ResourceGraphDefinition applied"
 
