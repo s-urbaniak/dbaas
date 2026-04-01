@@ -60,14 +60,14 @@ def _render_bar() -> str:
 
 def _enter_scroll_mode() -> None:
     _, h = _size()
-    # Save the current cursor position (start of the output area).
-    sys.stdout.write("\033[s")
     # Restrict scrolling to rows 1 .. h-1; row h is the bar and never scrolls.
     sys.stdout.write(f"\033[1;{h - 1}r")
     # Write the initial bar at row h.
     sys.stdout.write(f"\033[{h};1H\033[2K{_render_bar()}")
-    # Restore cursor to the output area.
-    sys.stdout.write("\033[u")
+    # Park the cursor at the bottom of the scroll area so output fills it
+    # naturally from here. Do NOT restore the old cursor position — if the
+    # shell left it at row h, every write would land on the bar row.
+    sys.stdout.write(f"\033[{h - 1};1H")
     sys.stdout.flush()
     _scroll_on[0] = True
     atexit.register(_exit_scroll_mode)
