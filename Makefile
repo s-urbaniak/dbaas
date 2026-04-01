@@ -76,7 +76,7 @@ helm-repos:
 
 # ── cert-manager (required by KCP for TLS certificate management) ─────────────
 .PHONY: deploy-cert-manager undeploy-cert-manager
-deploy-cert-manager: helm-repos
+deploy-cert-manager:
 	$(HELM) upgrade --install cert-manager cert-manager/cert-manager \
 	  -n cert-manager --create-namespace \
 	  --set crds.enabled=true
@@ -169,7 +169,7 @@ bootstrap-kcp-workspaces:
 # IMPORTANT: deploy-kro must succeed before deploy-sync-agent.
 # kro creates the MongoDBDatabase CRD dynamically; the sync agent must find it.
 .PHONY: deploy-kro undeploy-kro
-deploy-kro: helm-repos apply-crds
+deploy-kro: apply-crds
 	$(HELM) upgrade --install kro $(HELM_KRO_CHART) \
 	  -n $(HELM_KRO_NS) --create-namespace \
 	  -f $(HELM_KRO_VALUES)
@@ -218,7 +218,7 @@ create-provisioner-secret:
 	@echo "✓ kcp-admin-kubeconfig secret created in default namespace"
 
 .PHONY: deploy-sync-agent undeploy-sync-agent
-deploy-sync-agent: helm-repos create-sync-agent-secret
+deploy-sync-agent: create-sync-agent-secret
 	$(HELM) upgrade --install api-syncagent $(HELM_AGENT_CHART) \
 	  -n $(HELM_AGENT_NS) --create-namespace \
 	  -f deploy/sync-agent/values.yaml
@@ -265,6 +265,7 @@ deploy-phase2: get-kcp-kubeconfig bootstrap-kcp-workspaces deploy-sync-agent cre
 .PHONY: deploy
 deploy:
 	@python3 scripts/deploy.py \
+	  --step "helm-repos"   "$(MAKE) helm-repos" \
 	  --step "cert-manager" "$(MAKE) deploy-cert-manager" \
 	  --step "kcp"          "$(MAKE) deploy-kcp" \
 	  --step "crds"         "$(MAKE) apply-crds" \
