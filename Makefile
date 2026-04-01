@@ -283,6 +283,7 @@ deploy-phase2: get-kcp-kubeconfig bootstrap-kcp-workspaces deploy-sync-agent cre
 .PHONY: deploy
 deploy:
 	@python3 scripts/deploy.py \
+	  --step "kind"         "$(MAKE) kind-create" \
 	  --step "helm-repos"   "$(MAKE) helm-repos" \
 	  --step "cert-manager" "$(MAKE) deploy-cert-manager" \
 	  --step "kcp"          "$(MAKE) deploy-kcp" \
