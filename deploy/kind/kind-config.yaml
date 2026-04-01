@@ -11,3 +11,7 @@ nodes:
   - containerPort: 30090
     hostPort: 8090
     protocol: TCP
+  # Headlamp Kubernetes GUI — host:4466 → NodePort 30466 → pod:4466
+  - containerPort: 30466
+    hostPort: 4466
+    protocol: TCP

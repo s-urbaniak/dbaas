@@ -20,14 +20,17 @@ package provisioner
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -71,6 +74,16 @@ type Provisioner struct {
 	ExportName string
 	// ConsumersWorkspace is the KCP path of the consumer org workspace (e.g. "root:consumers").
 	ConsumersWorkspace string
+
+	// Headlamp integration (optional — no-op when K8sClient is nil).
+	// K8sClient is the in-cluster Kubernetes client used to update the Headlamp kubeconfig.
+	K8sClient kubernetes.Interface
+	// HeadlampNamespace is the namespace where Headlamp is deployed (e.g. "headlamp").
+	HeadlampNamespace string
+	// HeadlampSecret is the name of the Secret holding Headlamp's workspace kubeconfig.
+	HeadlampSecret string
+	// HeadlampDeployment is the name of the Headlamp Deployment to rolling-restart after updates.
+	HeadlampDeployment string
 }
 
 // WorkspaceInfo holds display information about a consumer workspace.
@@ -176,6 +189,7 @@ func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (stri
 		return "", fmt.Errorf("creating APIBinding in workspace %q: %w", name, err)
 	}
 
+	go p.syncHeadlamp(context.Background(), name, true)
 	return wsURL, nil
 }
 
@@ -262,7 +276,93 @@ func (p *Provisioner) DeleteWorkspace(ctx context.Context, name string) error {
 	if err := consumersClient.Resource(workspaceGVR).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 		return fmt.Errorf("deleting workspace %q: %w", name, err)
 	}
+	p.syncHeadlamp(ctx, name, false)
 	return nil
+}
+
+// syncHeadlamp adds (add=true) or removes (add=false) a workspace context from
+// the Headlamp kubeconfig Secret, then triggers a rolling restart of the Headlamp
+// Deployment so the change is picked up. Errors are logged but never propagate to
+// the caller — Headlamp sync is best-effort and must not block workspace operations.
+func (p *Provisioner) syncHeadlamp(ctx context.Context, wsName string, add bool) {
+	if p.K8sClient == nil {
+		return
+	}
+
+	secret, err := p.K8sClient.CoreV1().Secrets(p.HeadlampNamespace).Get(ctx, p.HeadlampSecret, metav1.GetOptions{})
+	if err != nil {
+		slog.Error("headlamp sync: get secret", "err", err)
+		return
+	}
+
+	var cfg *clientcmdapi.Config
+	if raw := secret.Data["config"]; len(raw) > 0 {
+		cfg, err = clientcmd.Load(raw)
+		if err != nil {
+			cfg = clientcmdapi.NewConfig()
+		}
+	} else {
+		cfg = clientcmdapi.NewConfig()
+	}
+
+	if add {
+		cluster := clientcmdapi.NewCluster()
+		cluster.Server = fmt.Sprintf(
+			"https://kcp-front-proxy.kcp.svc.cluster.local:8443/clusters/%s:%s",
+			p.ConsumersWorkspace, wsName,
+		)
+		cluster.InsecureSkipTLSVerify = p.AdminConfig.Insecure
+		if !cluster.InsecureSkipTLSVerify {
+			cluster.CertificateAuthorityData = p.AdminConfig.CAData
+		}
+
+		authInfo := clientcmdapi.NewAuthInfo()
+		switch {
+		case p.AdminConfig.BearerToken != "":
+			authInfo.Token = p.AdminConfig.BearerToken
+		case len(p.AdminConfig.CertData) > 0:
+			authInfo.ClientCertificateData = p.AdminConfig.CertData
+			authInfo.ClientKeyData = p.AdminConfig.KeyData
+		default:
+			authInfo.ClientCertificate = p.AdminConfig.CertFile
+			authInfo.ClientKey = p.AdminConfig.KeyFile
+		}
+
+		kubeCtx := clientcmdapi.NewContext()
+		kubeCtx.Cluster = wsName
+		kubeCtx.AuthInfo = wsName
+
+		cfg.Clusters[wsName] = cluster
+		cfg.AuthInfos[wsName] = authInfo
+		cfg.Contexts[wsName] = kubeCtx
+	} else {
+		delete(cfg.Clusters, wsName)
+		delete(cfg.AuthInfos, wsName)
+		delete(cfg.Contexts, wsName)
+	}
+
+	data, err := clientcmd.Write(*cfg)
+	if err != nil {
+		slog.Error("headlamp sync: marshal kubeconfig", "err", err)
+		return
+	}
+
+	if secret.Data == nil {
+		secret.Data = make(map[string][]byte)
+	}
+	secret.Data["config"] = data
+	if _, err := p.K8sClient.CoreV1().Secrets(p.HeadlampNamespace).Update(ctx, secret, metav1.UpdateOptions{}); err != nil {
+		slog.Error("headlamp sync: update secret", "err", err)
+		return
+	}
+
+	patch := fmt.Sprintf(`{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":%q}}}}}`,
+		time.Now().UTC().Format(time.RFC3339))
+	if _, err := p.K8sClient.AppsV1().Deployments(p.HeadlampNamespace).Patch(
+		ctx, p.HeadlampDeployment, types.MergePatchType, []byte(patch), metav1.PatchOptions{},
+	); err != nil {
+		slog.Error("headlamp sync: restart deployment", "err", err)
+	}
 }
 
 // KubeconfigBytes generates a kubeconfig YAML for the given workspace URL,

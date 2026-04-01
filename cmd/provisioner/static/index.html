@@ -12,7 +12,7 @@
     mq.addEventListener('change', e => document.documentElement.setAttribute('data-bs-theme', e.matches ? 'dark' : 'light'));
   </script>
 </head>
-<body class="bg-light py-5">
+<body class="bg-body py-5">
   <div class="container" style="max-width:860px">
     <h1 class="h4 mb-1">DBaaS Consumer Workspace Provisioner</h1>
     <p class="text-muted small mb-4">Creates KCP workspaces pre-bound to the <code>MongoDBDatabase</code> API.</p>
@@ -37,7 +37,7 @@
         <h2 class="h6 mb-3">Consumer Workspaces</h2>
         {{if .Workspaces}}
         <table class="table table-hover table-sm align-middle mb-0">
-          <thead class="table-light">
+          <thead>
             <tr>
               <th>Name</th>
               <th>Phase</th>
@@ -71,6 +71,9 @@
                   <a class="btn btn-sm btn-outline-primary"
                      href="/api/workspaces/{{.Name}}/kubeconfig"
                      download="{{.Name}}.kubeconfig">↓ kubeconfig</a>
+                  <a class="btn btn-sm btn-outline-secondary"
+                     href="http://localhost:4466/c/{{.Name}}/workloads/overview"
+                     target="_blank" rel="noopener">↗ Headlamp</a>
                   {{end}}
                   <button class="btn btn-sm btn-outline-danger"
                           {{if eq .Phase "Terminating"}}disabled{{else}}data-bs-toggle="modal" data-bs-target="#del-{{.Name}}"{{end}}>Delete</button>

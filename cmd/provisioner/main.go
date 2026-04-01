@@ -26,6 +26,8 @@ import (
 	"net/url"
 	"os"
 
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/s-urbaniak/dbaas/internal/provisioner"
@@ -68,11 +70,26 @@ func main() {
 		os.Exit(1)
 	}
 
+	var k8sClient kubernetes.Interface
+	if k8sCfg, err := rest.InClusterConfig(); err == nil {
+		if c, err := kubernetes.NewForConfig(k8sCfg); err == nil {
+			k8sClient = c
+		} else {
+			slog.Warn("headlamp integration disabled: building k8s client failed", "err", err)
+		}
+	} else {
+		slog.Info("headlamp integration disabled: not running in-cluster")
+	}
+
 	prov := &provisioner.Provisioner{
 		AdminConfig:        cfg,
 		ProviderWorkspace:  providerWorkspace,
 		ExportName:         exportName,
 		ConsumersWorkspace: consumersWorkspace,
+		K8sClient:          k8sClient,
+		HeadlampNamespace:  "headlamp",
+		HeadlampSecret:     "headlamp-workspace-kubeconfig",
+		HeadlampDeployment: "headlamp",
 	}
 
 	mux := http.NewServeMux()

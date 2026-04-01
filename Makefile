@@ -21,6 +21,11 @@ HELM_KRO_CHART  := oci://registry.k8s.io/kro/charts/kro
 HELM_KRO_NS     := kro
 HELM_KRO_VALUES := deploy/kro/kro-values.yaml
 
+# ── Headlamp Helm ───────────────────────────────────────────────────────────────
+HELM_HEADLAMP_CHART  := headlamp/headlamp
+HELM_HEADLAMP_NS     := headlamp
+HELM_HEADLAMP_VALUES := deploy/headlamp/values.yaml
+
 # ── API Sync Agent ───────────────────────────────────────────────────────────────
 HELM_AGENT_CHART := kcp/api-syncagent
 HELM_AGENT_NS    := kcp
@@ -84,8 +89,9 @@ apply-crds: apply-mck-crds apply-atlas-crds
 # ── Helm repo bootstrap ────────────────────────────────────────────────────────
 .PHONY: helm-repos
 helm-repos:
-	$(HELM) repo add kcp          https://kcp-dev.github.io/helm-charts 2>/dev/null || true
-	$(HELM) repo add cert-manager https://charts.jetstack.io            2>/dev/null || true
+	$(HELM) repo add kcp          https://kcp-dev.github.io/helm-charts        2>/dev/null || true
+	$(HELM) repo add cert-manager https://charts.jetstack.io                   2>/dev/null || true
+	$(HELM) repo add headlamp     https://headlamp-k8s.github.io/headlamp/     2>/dev/null || true
 	# kro is an OCI chart — no repo entry needed
 	$(HELM) repo update
 
@@ -198,6 +204,22 @@ undeploy-kro:
 	$(KUBECTL) delete -f config/kro/mongodatabase-rgd.yaml --ignore-not-found
 	$(HELM) uninstall kro -n $(HELM_KRO_NS) || true
 
+# ── Headlamp ──────────────────────────────────────────────────────────────────
+.PHONY: deploy-headlamp undeploy-headlamp
+deploy-headlamp:
+	$(KUBECTL) apply -f deploy/headlamp/kubeconfig-secret.yaml
+	$(KUBECTL) apply -f deploy/headlamp/rbac.yaml
+	$(HELM) upgrade --install headlamp $(HELM_HEADLAMP_CHART) \
+	  -n $(HELM_HEADLAMP_NS) --create-namespace \
+	  -f $(HELM_HEADLAMP_VALUES)
+	$(KUBECTL) -n $(HELM_HEADLAMP_NS) rollout status deployment/headlamp --timeout=120s
+	@echo "✓ Headlamp deployed → http://localhost:4466"
+
+undeploy-headlamp:
+	$(HELM) uninstall headlamp -n $(HELM_HEADLAMP_NS) || true
+	$(KUBECTL) delete -f deploy/headlamp/rbac.yaml --ignore-not-found
+	$(KUBECTL) delete -f deploy/headlamp/kubeconfig-secret.yaml --ignore-not-found
+
 # ── API Sync Agent ─────────────────────────────────────────────────────────────
 
 # Create the sync agent's KCP kubeconfig secret inside the cluster.
@@ -293,10 +315,11 @@ deploy:
 	  --step "bootstrap"    "$(MAKE) bootstrap-kcp-workspaces" \
 	  --step "sync-agent"   "$(MAKE) deploy-sync-agent" \
 	  --step "provisioner"  "$(MAKE) create-provisioner-secret" \
-	  --step "controllers"  "$(MAKE) ko-apply"
+	  --step "controllers"  "$(MAKE) ko-apply" \
+	  --step "headlamp"    "$(MAKE) deploy-headlamp"
 
 .PHONY: undeploy
-undeploy: undeploy-sync-agent undeploy-kro undeploy-kcp undeploy-cert-manager
+undeploy: undeploy-sync-agent undeploy-headlamp undeploy-kro undeploy-kcp undeploy-cert-manager
 	$(KUBECTL) delete -f deploy/mock-mongodb/    --ignore-not-found
 	$(KUBECTL) delete -f deploy/mock-flexcluster/ --ignore-not-found
 	$(KUBECTL) delete -f deploy/provisioner/      --ignore-not-found

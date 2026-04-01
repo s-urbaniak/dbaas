@@ -1,0 +1,25 @@
+# Headlamp Helm values for the DBaaS local kind cluster.
+# Ref: https://headlamp.dev/docs/latest/installation/in-cluster/
+
+replicaCount: 1
+
+service:
+  type: NodePort
+  nodePort: 30466
+
+# Expose workspace kubeconfigs maintained by the provisioner.
+# KUBECONFIG points to the mounted Secret key; Headlamp shows each
+# kubeconfig context as a separate cluster in the Cluster Chooser.
+env:
+  - name: KUBECONFIG
+    value: /kubeconfigs/config
+
+volumeMounts:
+  - name: workspace-kubeconfig
+    mountPath: /kubeconfigs
+    readOnly: true
+
+volumes:
+  - name: workspace-kubeconfig
+    secret:
+      secretName: headlamp-workspace-kubeconfig
