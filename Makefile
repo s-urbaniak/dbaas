@@ -91,7 +91,7 @@ apply-crds: apply-mck-crds apply-atlas-crds
 helm-repos:
 	$(HELM) repo add kcp          https://kcp-dev.github.io/helm-charts        2>/dev/null || true
 	$(HELM) repo add cert-manager https://charts.jetstack.io                   2>/dev/null || true
-	$(HELM) repo add headlamp     https://headlamp-k8s.github.io/headlamp/     2>/dev/null || true
+	$(HELM) repo add headlamp     https://kubernetes-sigs.github.io/headlamp/  2>/dev/null || true
 	# kro is an OCI chart — no repo entry needed
 	$(HELM) repo update
 
@@ -207,8 +207,6 @@ undeploy-kro:
 # ── Headlamp ──────────────────────────────────────────────────────────────────
 .PHONY: deploy-headlamp undeploy-headlamp
 deploy-headlamp:
-	$(HELM) repo add headlamp https://headlamp-k8s.github.io/headlamp/ 2>/dev/null || true
-	$(HELM) repo update headlamp
 	$(KUBECTL) apply -f deploy/headlamp/kubeconfig-secret.yaml
 	$(KUBECTL) apply -f deploy/headlamp/rbac.yaml
 	$(HELM) upgrade --install headlamp $(HELM_HEADLAMP_CHART) \
