@@ -92,6 +92,9 @@ deploy-kcp: deploy-cert-manager
 	$(HELM) upgrade --install kcp $(HELM_KCP_CHART) \
 	  -n $(HELM_KCP_NS) --create-namespace \
 	  -f $(HELM_KCP_VALUES)
+	@echo "Waiting for KCP pods to be ready..."
+	$(KUBECTL) -n $(HELM_KCP_NS) rollout status deployment/kcp            --timeout=300s
+	$(KUBECTL) -n $(HELM_KCP_NS) rollout status deployment/kcp-front-proxy --timeout=300s
 	$(KUBECTL) apply -f deploy/kcp/admin-cert.yaml
 	# The KCP workspace controller uses kcp-external-admin-kubeconfig-cert (signed by
 	# kcp-front-proxy-client-ca) to call back into kcp:6443/services/initializingworkspaces.
