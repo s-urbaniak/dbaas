@@ -7,12 +7,11 @@ service:
   type: NodePort
   nodePort: 30466
 
-# Expose workspace kubeconfigs maintained by the provisioner.
-# KUBECONFIG points to the mounted Secret key; Headlamp shows each
-# kubeconfig context as a separate cluster in the Cluster Chooser.
-env:
-  - name: KUBECONFIG
-    value: /kubeconfigs/config
+config:
+  # Pass the workspace kubeconfig via -kubeconfig flag.
+  # Each kubeconfig context appears as a separate cluster in the Cluster Chooser.
+  extraArgs:
+    - -kubeconfig=/kubeconfigs/config
 
 volumeMounts:
   - name: workspace-kubeconfig
