@@ -31,7 +31,8 @@ spec:
             name: kcp-bootstrap-scripts
       containers:
         - name: bootstrap
-          image: bitnami/kubectl:1.32
+          image: bitnami/kubectl:latest
+          imagePullPolicy: IfNotPresent
           command: ["/bin/sh", "-c"]
           args:
             - |
