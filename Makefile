@@ -238,10 +238,12 @@ deploy-sync-agent: create-sync-agent-secret
 	$(HELM) upgrade --install api-syncagent $(HELM_AGENT_CHART) \
 	  -n $(HELM_AGENT_NS) --create-namespace \
 	  -f deploy/sync-agent/values.yaml
+	$(KUBECTL) apply -f deploy/sync-agent/rbac.yaml
 	$(KUBECTL) apply -f config/sync-agent/
 
 undeploy-sync-agent:
 	$(KUBECTL) delete -f config/sync-agent/ --ignore-not-found
+	$(KUBECTL) delete -f deploy/sync-agent/rbac.yaml --ignore-not-found
 	$(HELM) uninstall api-syncagent -n $(HELM_AGENT_NS) || true
 
 # ── Mock controllers + provisioner ─────────────────────────────────────────────
