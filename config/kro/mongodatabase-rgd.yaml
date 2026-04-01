@@ -44,6 +44,8 @@ spec:
           namespace: ${schema.metadata.namespace}
         spec:
           type: ReplicaSet
+          version: "7.0.0"
+          credentials: mock-credentials
           persistent: true
 
     # ── CLOUD branch (AWS / AZURE → Atlas FlexCluster) ──────────────────────
@@ -56,11 +58,11 @@ spec:
           namespace: ${schema.metadata.namespace}
         spec:
           v20250312:
+            groupRef:
+              name: mock-group
             entry:
               name: ${schema.metadata.name}
               providerSettings:
-                # kro v0.9.0 cannot pass schema.spec.* fields to child resources
-                # with strict OpenAPI CRDs (type resolver bug). Hardcoded for mock.
                 backingProviderName: AWS
                 regionName: US_EAST_1
 
