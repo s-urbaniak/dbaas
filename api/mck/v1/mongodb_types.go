@@ -27,9 +27,10 @@ type MongoDBSpec struct {
 }
 
 type MongoDBStatus struct {
-	Phase      string             `json:"phase,omitempty"`
-	Version    string             `json:"version,omitempty"`
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	Phase            string             `json:"phase,omitempty"`
+	Version          string             `json:"version,omitempty"`
+	ConnectionString string             `json:"connectionString,omitempty"`
+	Conditions       []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // +kubebuilder:object:root=true

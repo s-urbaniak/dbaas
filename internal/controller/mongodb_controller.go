@@ -46,6 +46,7 @@ func (r *MongoDBReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	patch := client.MergeFrom(obj.DeepCopy())
 	obj.Status.Phase = "Running"
 	obj.Status.Version = obj.Spec.Version
+	obj.Status.ConnectionString = fmt.Sprintf("mongodb://%s.%s.svc:27017", obj.Name, obj.Namespace)
 	obj.Status.Conditions = []metav1.Condition{
 		readyCondition("Mock MCK MongoDB is running"),
 	}

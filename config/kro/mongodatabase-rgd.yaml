@@ -23,12 +23,12 @@ spec:
       storage: string
     status:
       # NOTE: Status CEL can only reference child resource IDs (not instance.*).
-      # Referencing a
-      # resource excluded by includeWhen causes a nil-ref error (kro issue #509,
-      # still open). For now, only the ON-PREMISE branch surfaces real status;
-      # AWS/AZURE status is a PoC stub.
+      # Referencing a resource excluded by includeWhen causes a nil-ref error
+      # (kro issue #509, still open). For now only the ON-PREMISE branch is
+      # surfaced; atlasFlexCluster.status.v20250312.connectionStrings.standardSrv
+      # is set by the controller but cannot be copied here yet.
       state: '${mckMongoDB.status.phase}'
-      connectionString: '${mckMongoDB.status.phase == "Running" ? "mongodb://" + mckMongoDB.metadata.name + "." + mckMongoDB.metadata.namespace + ".svc:27017" : ""}'
+      connectionString: '${mckMongoDB.status.connectionString}'
 
   resources:
     # ── ON-PREMISE branch ───────────────────────────────────────────────────

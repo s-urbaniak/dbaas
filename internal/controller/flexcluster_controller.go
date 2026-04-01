@@ -44,9 +44,13 @@ func (r *FlexClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	stateName := "IDLE"
+	standardSrv := fmt.Sprintf("mongodb+srv://%s.%s.svc", obj.Name, obj.Namespace)
 	patch := client.MergeFrom(obj.DeepCopy())
 	obj.Status.V20250312 = &atlasv1.FlexClusterStatusV20250312{
 		StateName: &stateName,
+		ConnectionStrings: &atlasv1.V20250312ConnectionStrings{
+			StandardSrv: &standardSrv,
+		},
 	}
 	conditions := []metav1.Condition{
 		readyCondition("Mock Atlas FlexCluster is idle"),
