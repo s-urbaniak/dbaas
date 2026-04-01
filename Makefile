@@ -39,9 +39,21 @@ KO_PLATFORMS ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 KUBECTL ?= kubectl
 HELM    ?= helm
 KO      ?= ko
+KIND    ?= kind
 
 .PHONY: all
 all: refresh-crds
+
+# ── kind cluster ──────────────────────────────────────────────────────────────
+.PHONY: kind-create kind-delete
+kind-create:
+	$(KIND) create cluster --name $(KIND_CLUSTER_NAME) --config deploy/kind/kind-config.yaml
+	@echo "✓ kind cluster '$(KIND_CLUSTER_NAME)' created"
+	@echo "  KCP front-proxy → https://localhost:6443"
+	@echo "  DBaaS provisioner UI → http://localhost:8090"
+
+kind-delete:
+	$(KIND) delete cluster --name $(KIND_CLUSTER_NAME)
 
 # ── CRD refresh ───────────────────────────────────────────────────────────────
 .PHONY: refresh-crds refresh-mck-crds refresh-atlas-crds
@@ -149,18 +161,6 @@ get-kcp-kubeconfig:
 	   "$$CA" "$$CERT" "$$KEY" > $(KCP_KUBECONFIG)
 	@echo "✓ KCP admin kubeconfig written to $(KCP_KUBECONFIG)"
 
-# Port-forward the KCP front-proxy to localhost:6443.
-# Run this in a separate terminal after deploy-kcp.
-.PHONY: kcp-port-forward
-kcp-port-forward:
-	$(KUBECTL) -n $(HELM_KCP_NS) port-forward svc/kcp-front-proxy 6443:8443
-
-# Port-forward the DBaaS provisioner UI to localhost:8090.
-# Run this in a separate terminal after make deploy.
-.PHONY: provisioner-port-forward
-provisioner-port-forward:
-	$(KUBECTL) port-forward svc/dbaas-provisioner 8090
-
 # Bootstrap the root:dbaas-provider and root:consumers workspaces in KCP.
 # Runs as a Kubernetes Job inside the cluster — no local port-forward required.
 # Must run AFTER deploy-kcp (kcp-admin-client-cert secret must exist).
@@ -201,7 +201,7 @@ undeploy-kro:
 # ── API Sync Agent ─────────────────────────────────────────────────────────────
 
 # Create the sync agent's KCP kubeconfig secret inside the cluster.
-# The admin kubeconfig (KCP_KUBECONFIG) uses localhost:6443 (port-forward) which
+# The admin kubeconfig (KCP_KUBECONFIG) uses localhost:6443 (host NodePort) which
 # is unreachable from pods. We rewrite the server URL to the in-cluster KCP
 # front-proxy service address before storing it as a secret.
 .PHONY: create-sync-agent-secret
@@ -263,24 +263,22 @@ ko-apply:
 	  -f deploy/provisioner/
 
 # ── Full deploy sequence ────────────────────────────────────────────────────────
-# Single target — no port-forward required. The pipeline script renders a status
-# bar at the bottom of the terminal with spinner animation.
+# Single target — the pipeline script renders a status bar at the bottom of the
+# terminal with spinner animation.
 #
 # Individual phase targets (deploy-phase1, deploy-phase2) are kept for manual
-# step-by-step use. kcp-port-forward is available for debugging.
+# step-by-step use.
 .PHONY: deploy-phase1
 deploy-phase1: deploy-kcp apply-crds deploy-kro
 	@echo ""
 	@echo "  Phase 1 complete (cert-manager, KCP, CRDs, kro)."
 	@echo "  Continue with: make deploy-phase2"
-	@echo "  (No port-forward needed — bootstrap runs as an in-cluster Job)"
 
 .PHONY: deploy-phase2
 deploy-phase2: get-kcp-kubeconfig bootstrap-kcp-workspaces deploy-sync-agent create-provisioner-secret ko-apply
 	@echo ""
-	@echo "  Phase 2 complete. Expose the provisioner:"
-	@echo "    kubectl port-forward svc/dbaas-provisioner 8090"
-	@echo "    → open http://localhost:8090"
+	@echo "  Phase 2 complete."
+	@echo "  → open http://localhost:8090"
 
 .PHONY: deploy
 deploy:

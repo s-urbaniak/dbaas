@@ -55,9 +55,11 @@ metadata:
   name: dbaas-provisioner
   namespace: default
 spec:
+  type: NodePort
   selector:
     app: dbaas-provisioner
   ports:
     - port: 8090
       targetPort: http
+      nodePort: 30090
       name: http

@@ -10,8 +10,10 @@ externalPort: "6443"
 
 kcpFrontProxy:
   service:
-    # ClusterIP is sufficient for local dev — reach it via kubectl port-forward.
-    type: ClusterIP
+    # NodePort with a pinned port so kind's extraPortMappings can forward
+    # host:6443 → container:30443 → pod:8443 without a port-forward.
+    type: NodePort
+    nodePort: 30443
   # Add the in-cluster service hostname to the front-proxy TLS cert SANs so that
   # components running inside the cluster (e.g. the sync agent) can verify TLS
   # without skipping verification.
