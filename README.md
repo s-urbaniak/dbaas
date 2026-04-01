@@ -68,6 +68,154 @@ Physical Kubernetes Cluster (kind / minikube)
 
 ---
 
+## Resource lifecycle: from tenant to physical cluster
+
+This section traces a single `MongoDBDatabase` through every layer of the system,
+using a concrete example: tenant workspace `root:consumers:test` (internal cluster
+ID `1agg86w8arvo93ki`) creating a database named `my-onprem-db` with
+`provider: ON-PREMISE`.
+
+```
+  KCP (virtual clusters)                    Physical Kubernetes cluster
+  ══════════════════════                    ═══════════════════════════
+
+  root:consumers:test
+  ┌─────────────────────────────┐
+  │ MongoDBDatabase             │  ①                ┌─────────────────────────────────────┐
+  │  ns:   default              │ ─── sync down ──► │ MongoDBDatabase                     │
+  │  name: my-onprem-db         │                   │  ns:   1agg86w8arvo93ki             │
+  │  spec:                      │                   │  name: 2747cabb…-cc2e300d…          │
+  │    provider: ON-PREMISE     │                   │  annotations:                       │
+  │                             │                   │    remote-object-name: my-onprem-db │
+  │  status:             ◄──────┼──── sync up ───   │  spec:                              │
+  │    state: ACTIVE     ⑥      │                   │    provider: ON-PREMISE             │
+  │    connectionString: …      │                   └──────────────┬──────────────────────┘
+  └─────────────────────────────┘                                  │ ② kro reconciles
+                                                                   │   includeWhen:
+                                                                   │   provider==ON-PREMISE
+                                                                   ▼
+                                                   ┌─────────────────────────────────────┐
+                                                   │ mongodb.com/v1 MongoDB      ③        │
+                                                   │  ns:   1agg86w8arvo93ki             │
+                                                   │  name: 2747cabb…-cc2e300d…          │
+                                                   │  spec:                              │
+                                                   │    type: ReplicaSet                 │
+                                                   │                                     │
+                                                   │  status:                     ④      │
+                                                   │    phase: Running                   │
+                                                   └──────────────┬──────────────────────┘
+                                                                  │ ⑤ kro aggregates
+                                                                  │   status back to
+                                                                  ▼   MongoDBDatabase
+                                                   ┌─────────────────────────────────────┐
+                                                   │ MongoDBDatabase.status              │
+                                                   │  state: ACTIVE                      │
+                                                   │  connectionString:                  │
+                                                   │    mongodb://2747cabb….svc:27017    │
+                                                   └─────────────────────────────────────┘
+```
+
+### 1 — Tenant creates MongoDBDatabase in KCP
+
+```
+KCP workspace: root:consumers:test  (cluster ID: 1agg86w8arvo93ki)
+  namespace:   default
+  name:        my-onprem-db
+  spec.provider: ON-PREMISE
+```
+
+The tenant's kubeconfig points at the KCP front-proxy. From the tenant's
+perspective this is a normal `kubectl apply`. The workspace only exposes the
+`MongoDBDatabase` CRD (via `APIBinding`) — no other resources are visible.
+
+### 2 — API Sync Agent syncs the object to the physical cluster
+
+The sync agent watches all KCP workspaces that have bound the
+`mongodatabases.dbaas.mongodb.com` APIExport. When it sees the new object it
+creates a mirror on the physical cluster with a **transformed identity**:
+
+| Field | KCP (tenant view) | Physical cluster |
+|---|---|---|
+| namespace | `default` | `1agg86w8arvo93ki` (workspace cluster ID) |
+| name | `my-onprem-db` | `2747cabbb481a433679f-cc2e300df005cd9a4afb` (hash) |
+
+**Why the namespace changes:** the sync agent creates one namespace per KCP
+workspace on the physical cluster, named after the workspace's internal cluster
+ID. This keeps every tenant's objects isolated without requiring any namespace
+pre-provisioning.
+
+**Why the name changes:** the sync agent hashes the combination of workspace
+cluster ID + original namespace + original name into a deterministic, fixed-length
+name. This prevents collisions when multiple tenants each create a
+`MongoDBDatabase/default/my-db`.
+
+The original coordinates are preserved as annotations on the physical object so
+nothing is lost:
+
+```yaml
+annotations:
+  syncagent.kcp.io/remote-object-cluster:   1agg86w8arvo93ki
+  syncagent.kcp.io/remote-object-namespace: default
+  syncagent.kcp.io/remote-object-name:      my-onprem-db
+```
+
+### 3 — kro reconciles MongoDBDatabase → creates child resource
+
+kro's microcontroller watches `MongoDBDatabase` objects on the physical cluster.
+It evaluates `includeWhen` on each resource in the RGD:
+
+- `schema.spec.provider == "ON-PREMISE"` → `mckMongoDB` included
+- `schema.spec.provider == "AWS" || schema.spec.provider == "AZURE"` → `atlasFlexCluster` excluded
+
+kro creates the `mongodb.com/v1 MongoDB` child using `schema.metadata.name` and
+`schema.metadata.namespace` from the physical object — i.e. the hashed values:
+
+```
+namespace: 1agg86w8arvo93ki
+name:      2747cabbb481a433679f-cc2e300df005cd9a4afb
+```
+
+### 4 — Mock controller reconciles MongoDB → writes status
+
+The mock MongoDB controller reconciles the `mongodb.com/v1 MongoDB` object and
+sets:
+
+```yaml
+status:
+  phase: Running
+```
+
+### 5 — kro aggregates status → MongoDBDatabase.status
+
+kro reads `mckMongoDB.status.phase` and writes it back to the `MongoDBDatabase`
+status, also deriving the `connectionString` from the physical name and namespace:
+
+```yaml
+status:
+  state: ACTIVE
+  connectionString: mongodb://2747cabbb481a433679f-cc2e300df005cd9a4afb.1agg86w8arvo93ki.svc:27017
+  conditions:
+    - type: Ready
+      status: "True"
+```
+
+### 6 — Sync agent pushes status back to the KCP workspace
+
+The sync agent watches for status changes on the physical object and writes them
+back to the original `my-onprem-db` object in the tenant's KCP workspace. The
+tenant sees:
+
+```
+$ kubectl --kubeconfig test.kubeconfig get mongodbdatabase my-onprem-db
+NAME           PROVIDER     STATE    READY
+my-onprem-db   ON-PREMISE   ACTIVE   True
+```
+
+The tenant never sees the hashed name or the physical cluster namespace — those
+are an internal implementation detail of the sync layer.
+
+---
+
 ## Repository layout
 
 ```
@@ -283,18 +431,23 @@ keywords such as `default`, `enum`, and `description` are not recognised and
 cause a parse error (`unexpected type: <value>`). Remove them from
 `spec.schema.spec.*` fields.
 
-**`schema.spec.*` unusable in resource templates and `includeWhen`**
-CEL expressions in `spec.resources[*].template` and `includeWhen` that reference
-`schema.spec.*` fields fail type-checking with
-`type "__type_schema.spec.<field>" … type kind mismatch`. Only
-`schema.metadata.*` fields work. As a result, conditional resource creation
-based on spec fields (`includeWhen: ${schema.spec.provider == "ON-PREMISE"}`) is
-not possible; both child resources are always created.
+**`schema.spec.*` in `includeWhen`: requires a `default` value**
+String equality in `includeWhen` (e.g. `${schema.spec.provider == "ON-PREMISE"}`)
+works in kro v0.6.3+. The field must have a `default` value in the schema;
+without one kro's static evaluator throws `no such key` at validation time.
+kro's SimpleSchema does not support the `default` keyword for scalar fields
+(only `type` is accepted), so ensure the field is always set by the caller.
+A `type kind mismatch` error on `schema.spec.*` fields indicates you are running
+kro < v0.6.3 — upgrade to v0.9.0+.
 
-**Status CEL: only child resource IDs are in scope**
+**Status CEL: excluded resources cause nil-ref errors**
 CEL expressions in `spec.schema.status` can only reference child resource IDs
 (`mckMongoDB`, `atlasFlexCluster`). Neither `schema.*` nor `instance.*` resolves
-to the current instance — both fail with `references unknown identifiers`.
+to the current instance. More importantly, referencing a child resource that was
+excluded via `includeWhen` results in a nil-reference error at runtime (kro issue
+[#509](https://github.com/kro-run/kro/issues/509), still open). As a workaround
+the PoC only surfaces `mckMongoDB` status; `atlasFlexCluster` status is not
+reflected in `MongoDBDatabase.status`.
 
 ---
 

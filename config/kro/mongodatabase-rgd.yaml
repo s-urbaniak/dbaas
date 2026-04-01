@@ -6,10 +6,6 @@
 #      - Creates a mongodb.com/v1 MongoDB child  (provider=ON-PREMISE)
 #      - Creates an atlas FlexCluster child       (provider=AWS or AZURE)
 #
-# Status is derived from spec input to avoid CEL null-reference issues when
-# referencing conditionally excluded child resources.
-# A production version would aggregate real status from mckMongoDB / atlasFlexCluster.
-#
 # Ref: https://kro.run/docs/concepts/
 apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
@@ -26,16 +22,19 @@ spec:
       members: integer
       storage: string
     status:
-      # kro schema format: 'fieldname: ${CEL}' to populate at runtime from child
-      # resources. status CEL can only reference child resource IDs (not instance.*).
+      # NOTE: Status CEL can only reference child resource IDs (not instance.*).
+      # Referencing a
+      # resource excluded by includeWhen causes a nil-ref error (kro issue #509,
+      # still open). For now, only the ON-PREMISE branch surfaces real status;
+      # AWS/AZURE status is a PoC stub.
       state: '${mckMongoDB.status.phase}'
       connectionString: '${mckMongoDB.status.phase == "Running" ? "mongodb://" + mckMongoDB.metadata.name + "." + mckMongoDB.metadata.namespace + ".svc:27017" : ""}'
 
   resources:
     # ── ON-PREMISE branch ───────────────────────────────────────────────────
-    # kro v0.9.0 cannot use schema.spec.* in includeWhen (type resolver bug),
-    # so both child resources are always created regardless of provider.
     - id: mckMongoDB
+      includeWhen:
+        - ${schema.spec.provider == "ON-PREMISE"}
       template:
         apiVersion: mongodb.com/v1
         kind: MongoDB
@@ -50,6 +49,8 @@ spec:
 
     # ── CLOUD branch (AWS / AZURE → Atlas FlexCluster) ──────────────────────
     - id: atlasFlexCluster
+      includeWhen:
+        - ${schema.spec.provider == "AWS" || schema.spec.provider == "AZURE"}
       template:
         apiVersion: atlas.generated.mongodb.com/v1
         kind: FlexCluster
@@ -65,4 +66,3 @@ spec:
               providerSettings:
                 backingProviderName: AWS
                 regionName: US_EAST_1
-
