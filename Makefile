@@ -155,6 +155,12 @@ get-kcp-kubeconfig:
 kcp-port-forward:
 	$(KUBECTL) -n $(HELM_KCP_NS) port-forward svc/kcp-front-proxy 6443:8443
 
+# Port-forward the DBaaS provisioner UI to localhost:8090.
+# Run this in a separate terminal after make deploy.
+.PHONY: provisioner-port-forward
+provisioner-port-forward:
+	$(KUBECTL) port-forward svc/dbaas-provisioner 8090
+
 # Bootstrap the root:dbaas-provider and root:consumers workspaces in KCP.
 # Runs as a Kubernetes Job inside the cluster — no local port-forward required.
 # Must run AFTER deploy-kcp (kcp-admin-client-cert secret must exist).
