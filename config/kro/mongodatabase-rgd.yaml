@@ -64,5 +64,5 @@ spec:
             entry:
               name: ${schema.metadata.name}
               providerSettings:
-                backingProviderName: AWS
-                regionName: US_EAST_1
+                backingProviderName: ${schema.spec.provider}
+                regionName: ${schema.spec.region}
