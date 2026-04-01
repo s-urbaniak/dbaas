@@ -87,8 +87,10 @@ undeploy-cert-manager:
 	$(HELM) uninstall cert-manager -n cert-manager || true
 
 # ── KCP ───────────────────────────────────────────────────────────────────────
+# Prerequisite when called standalone: cert-manager must already be deployed.
+# When invoked via `make deploy` the pipeline script guarantees ordering.
 .PHONY: deploy-kcp undeploy-kcp
-deploy-kcp: deploy-cert-manager
+deploy-kcp:
 	$(HELM) upgrade --install kcp $(HELM_KCP_CHART) \
 	  -n $(HELM_KCP_NS) --create-namespace \
 	  -f $(HELM_KCP_VALUES)
@@ -171,8 +173,10 @@ bootstrap-kcp-workspaces:
 # ── kro ───────────────────────────────────────────────────────────────────────
 # IMPORTANT: deploy-kro must succeed before deploy-sync-agent.
 # kro creates the MongoDBDatabase CRD dynamically; the sync agent must find it.
+# Prerequisite when called standalone: MCK + Atlas CRDs must already be applied.
+# When invoked via `make deploy` the pipeline script guarantees ordering.
 .PHONY: deploy-kro undeploy-kro
-deploy-kro: apply-crds
+deploy-kro:
 	$(HELM) upgrade --install kro $(HELM_KRO_CHART) \
 	  -n $(HELM_KRO_NS) --create-namespace \
 	  -f $(HELM_KRO_VALUES)
