@@ -161,7 +161,7 @@ bootstrap-kcp-workspaces:
 	$(KUBECTL) -n $(HELM_KCP_NS) delete job kcp-bootstrap --ignore-not-found
 	$(KUBECTL) apply -f deploy/kcp/bootstrap-job.yaml
 	$(KUBECTL) -n $(HELM_KCP_NS) wait --for=condition=complete \
-	  job/kcp-bootstrap --timeout=180s
+	  job/kcp-bootstrap --timeout=600s
 	$(KUBECTL) -n $(HELM_KCP_NS) delete job kcp-bootstrap --ignore-not-found
 	@echo "✓ KCP workspaces bootstrapped"
 

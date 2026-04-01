@@ -31,7 +31,7 @@ spec:
             name: kcp-bootstrap-scripts
       containers:
         - name: bootstrap
-          image: bitnami/kubectl:latest
+          image: bitnami/kubectl:1.32
           command: ["/bin/sh", "-c"]
           args:
             - |
