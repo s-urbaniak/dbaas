@@ -1,6 +1,6 @@
 {
   "name": "kcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "KCP workspace and API binding viewer for Headlamp",
   "main": "dist/main.js",
   "scripts": {
@@ -8,6 +8,6 @@
     "start": "headlamp-plugin start"
   },
   "devDependencies": {
-    "@kinvolk/headlamp-plugin": "0.13.1"
+    "@kinvolk/headlamp-plugin": "^0.13.1"
   }
 }

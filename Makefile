@@ -215,7 +215,7 @@ deploy-headlamp-plugin: build-headlamp-plugin
 	$(KUBECTL) create configmap headlamp-kcp-plugin \
 	  -n $(HELM_HEADLAMP_NS) \
 	  --from-file=main.js=$(HEADLAMP_PLUGIN_DIR)/dist/main.js \
-	  '--from-literal=package.json={"name":"kcp","version":"0.1.0","devDependencies":{"@kinvolk/headlamp-plugin":"0.13.1"}}' \
+	  '--from-literal=package.json={"name":"kcp","version":"0.1.1","devDependencies":{"@kinvolk/headlamp-plugin":"^0.13.1"}}' \
 	  --dry-run=client -o yaml | $(KUBECTL) apply -f -
 
 bootstrap-headlamp-kubeconfig:

@@ -47,7 +47,7 @@
           </thead>
           <tbody>
             {{range .Workspaces}}
-            <tr {{if eq .Phase "Terminating"}}class="ws-transient table-secondary"{{end}}>
+            <tr {{if eq .Phase "Terminating"}}class="ws-transient opacity-50"{{end}}>
               <td><strong>{{.Name}}</strong></td>
               <td>
                 {{if eq .Phase "Terminating"}}
@@ -72,7 +72,7 @@
                      href="/api/workspaces/{{.Name}}/kubeconfig"
                      download="{{.Name}}.kubeconfig">↓ kubeconfig</a>
                   <a class="btn btn-sm btn-outline-secondary"
-                     href="http://localhost:4466/c/{{.Name}}/workloads/overview"
+                     href="http://localhost:4466/c/{{.Name}}"
                      target="_blank" rel="noopener">↗ Headlamp</a>
                   {{end}}
                   <button class="btn btn-sm btn-outline-danger"

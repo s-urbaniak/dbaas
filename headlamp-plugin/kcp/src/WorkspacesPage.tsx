@@ -1,60 +1,69 @@
-import React from 'react';
-import { K8s } from '@kinvolk/headlamp-plugin/lib';
+import React, { useState } from 'react';
+import { makeCustomResourceClass } from '@kinvolk/headlamp-plugin/lib/Crd';
+import { SectionBox, NameValueTable, MetadataDisplay } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import Box from '@mui/material/Box';
+import Chip from '@mui/material/Chip';
+import Drawer from '@mui/material/Drawer';
+import IconButton from '@mui/material/IconButton';
+import Link from '@mui/material/Link';
+import Typography from '@mui/material/Typography';
+import { Icon } from '@iconify/react';
 
-interface LogicalClusterStatus {
-  URL?: string;
-  phase?: string;
-}
+const LogicalCluster = makeCustomResourceClass({
+  apiInfo: [{ group: 'core.kcp.io', version: 'v1alpha1' }],
+  kind: 'LogicalCluster',
+  pluralName: 'logicalclusters',
+  singularName: 'logicalcluster',
+  isNamespaced: false,
+});
 
-interface WorkspaceStatus {
-  URL?: string;
-  phase?: string;
-}
+const Workspace = makeCustomResourceClass({
+  apiInfo: [{ group: 'tenancy.kcp.io', version: 'v1alpha1' }],
+  kind: 'Workspace',
+  pluralName: 'workspaces',
+  singularName: 'workspace',
+  isNamespaced: false,
+});
 
-class LogicalCluster extends K8s.KubeObject<Record<string, unknown>, LogicalClusterStatus> {
-  static apiVersion = 'core.kcp.io/v1alpha1';
-  static kind = 'LogicalCluster';
-  static plural = 'logicalclusters';
-  static isNamespaced = false;
-}
-
-class Workspace extends K8s.KubeObject<Record<string, unknown>, WorkspaceStatus> {
-  static apiVersion = 'tenancy.kcp.io/v1alpha1';
-  static kind = 'Workspace';
-  static plural = 'workspaces';
-  static isNamespaced = false;
-}
-
-/** Extract workspace path like "root:consumers" from a KCP URL. */
 function wsPath(url?: string): string {
-  if (!url) return '?';
+  if (!url) return '';
   const idx = url.indexOf('/clusters/');
   return idx >= 0 ? url.slice(idx + '/clusters/'.length) : url;
 }
 
-/** Derive the context name used by the provisioner from the workspace path.
- *  e.g. "root:consumers:test" → "test" (the last segment). */
-function ctxName(path: string): string {
-  const parts = path.split(':');
-  return parts[parts.length - 1];
+function phaseBadgeColor(phase?: string): 'success' | 'warning' | 'default' | 'error' {
+  if (phase === 'Ready') return 'success';
+  if (phase === 'Initializing') return 'warning';
+  if (phase === 'Terminating') return 'error';
+  return 'default';
 }
 
-const phaseBadge = (phase?: string): React.CSSProperties => {
-  const color =
-    phase === 'Ready' ? '#2e7d32' :
-    phase === 'Initializing' ? '#ed6c02' :
-    phase === 'Terminating' ? '#616161' : '#1565c0';
-  return {
-    display: 'inline-block',
-    padding: '1px 7px',
-    borderRadius: 4,
-    fontSize: 11,
-    fontWeight: 600,
-    background: color,
-    color: '#fff',
-    marginLeft: 8,
-  };
-};
+function WorkspaceDetailPane({ item, onClose }: { item: any; onClose: () => void }) {
+  const phase = item.jsonData?.status?.phase;
+  const url = item.jsonData?.spec?.URL;
+
+  return (
+    <Box sx={{ width: '50vw', p: 2, overflowY: 'auto', height: '100%', pt: '64px' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+        <Typography variant="h6" sx={{ flex: 1 }}>{item.metadata?.name}</Typography>
+        <IconButton onClick={onClose} size="small">
+          <Icon icon="mdi:close" />
+        </IconButton>
+      </Box>
+
+      <MetadataDisplay resource={item} />
+
+      <SectionBox title="Status">
+        <NameValueTable
+          rows={[
+            { name: 'Phase', value: phase ? <Chip label={phase} color={phaseBadgeColor(phase)} size="small" /> : '—' },
+            { name: 'URL', value: url ?? '—' },
+          ]}
+        />
+      </SectionBox>
+    </Box>
+  );
+}
 
 interface WorkspaceNodeProps {
   name: string;
@@ -62,77 +71,80 @@ interface WorkspaceNodeProps {
   url?: string;
   currentPath: string;
   indent: number;
+  onClick: () => void;
 }
 
-function WorkspaceNode({ name, phase, url, currentPath, indent }: WorkspaceNodeProps) {
-  const childPath = `${currentPath}:${name}`;
-  const ctx = ctxName(childPath);
-  const headlampURL = `/c/${ctx}`;
-
+function WorkspaceNode({ name, phase, url, currentPath, indent, onClick }: WorkspaceNodeProps) {
   return (
-    <div style={{ marginLeft: indent, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-      <span style={{ color: 'gray', fontSize: 13 }}>{'└─'}</span>
-      <a href={headlampURL} style={{ fontWeight: 500, textDecoration: 'none' }}>
+    <Box sx={{ ml: `${indent}px`, mb: 0.75, display: 'flex', alignItems: 'center', gap: 1 }}>
+      <Typography variant="body2" color="text.secondary">└─</Typography>
+      <Link
+        component="button"
+        onClick={onClick}
+        sx={{ fontWeight: 500, cursor: 'pointer', background: 'none', border: 'none', padding: 0, fontSize: 'inherit', fontFamily: 'inherit' }}
+      >
         {name}
-      </a>
-      <span style={phaseBadge(phase)}>{phase ?? '—'}</span>
-      {url && (
-        <span style={{ fontSize: 11, color: 'gray' }}>
-          {wsPath(url)}
-        </span>
-      )}
-    </div>
+      </Link>
+      {phase && <Chip label={phase} color={phaseBadgeColor(phase)} size="small" sx={{ fontWeight: 600 }} />}
+      {url && <Typography variant="caption" color="text.secondary">{wsPath(url)}</Typography>}
+    </Box>
   );
 }
 
 export default function WorkspacesPage() {
-  const [lc, lcError] = LogicalCluster.useGet('cluster');
-  const [workspaces, wsError] = Workspace.useList();
+  const [selectedWs, setSelectedWs] = useState<any>(null);
+  const [lc, lcError] = LogicalCluster.useGet('cluster') as [any, any];
+  const [workspaces, wsError] = Workspace.useList() as [any[] | null, any];
 
   const loading = !lc && !lcError;
-  if (loading) return <p style={{ padding: 16 }}>Loading…</p>;
+  if (loading) return <Typography sx={{ p: 2 }}>Loading…</Typography>;
 
   const currentPath = wsPath(lc?.jsonData?.status?.URL);
+  const lcPhase = lc?.jsonData?.status?.phase;
 
   return (
-    <div style={{ padding: 16 }}>
-      <h2 style={{ marginTop: 0 }}>Workspace Hierarchy</h2>
+    <>
+      <Box sx={{ p: 2 }}>
+        <Typography variant="h5" sx={{ mb: 2 }}>Workspace Hierarchy</Typography>
 
-      {lcError && (
-        <p style={{ color: 'orange', fontSize: 13 }}>
-          Could not load LogicalCluster: {String(lcError)}
-        </p>
-      )}
-
-      {/* Current workspace root node */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <span style={{ fontSize: 18 }}>🗂</span>
-        <strong style={{ fontSize: 15 }}>{currentPath}</strong>
-        {lc?.jsonData?.status?.phase && (
-          <span style={phaseBadge(lc.jsonData.status.phase)}>{lc.jsonData.status.phase}</span>
+        {lcError && (
+          <Typography color="warning.main" variant="body2" sx={{ mb: 1 }}>
+            Could not load LogicalCluster: {String(lcError)}
+          </Typography>
         )}
-        <span style={{ fontSize: 11, color: 'gray' }}>(current workspace)</span>
-      </div>
 
-      {/* Child workspaces */}
-      {wsError && (
-        <p style={{ color: 'orange', fontSize: 13, marginLeft: 24 }}>
-          Could not list child workspaces: {String(wsError)}
-        </p>
-      )}
-      {workspaces && workspaces.length === 0 && (
-        <p style={{ color: 'gray', fontSize: 13, marginLeft: 24 }}>No child workspaces.</p>
-      )}
-      {workspaces && workspaces.map(ws => (
-        <WorkspaceNode
-          key={ws.metadata.name}
-          name={ws.metadata.name}
-          phase={ws.jsonData.status?.phase}
-          url={ws.jsonData.status?.URL}
-          currentPath={currentPath}
-          indent={24}
-        />
-      ))}
-    </div>
+        {/* Current workspace root node */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+          <Icon icon="mdi:folder-open" width={20} />
+          <Typography variant="subtitle1" fontWeight={600}>{currentPath}</Typography>
+          {lcPhase && <Chip label={lcPhase} color={phaseBadgeColor(lcPhase)} size="small" sx={{ fontWeight: 600 }} />}
+          <Typography variant="caption" color="text.secondary">(current workspace)</Typography>
+        </Box>
+
+        {wsError && (
+          <Typography color="warning.main" variant="body2" sx={{ ml: 3 }}>
+            Could not list child workspaces: {String(wsError)}
+          </Typography>
+        )}
+        {workspaces && workspaces.length === 0 && (
+          <Typography variant="body2" color="text.secondary" sx={{ ml: 3 }}>No child workspaces.</Typography>
+        )}
+        {workspaces && workspaces.map((ws: any) => (
+          <WorkspaceNode
+            key={ws.metadata?.name}
+            name={ws.metadata?.name}
+            phase={ws.jsonData?.status?.phase}
+            url={ws.jsonData?.spec?.URL}
+            currentPath={currentPath}
+            indent={24}
+            onClick={() => setSelectedWs(ws)}
+          />
+        ))}
+      </Box>
+
+      <Drawer anchor="right" open={!!selectedWs} onClose={() => setSelectedWs(null)}>
+        {selectedWs && <WorkspaceDetailPane item={selectedWs} onClose={() => setSelectedWs(null)} />}
+      </Drawer>
+    </>
   );
 }
