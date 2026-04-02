@@ -5,11 +5,13 @@ import WorkspacesPage from './WorkspacesPage';
 registerRoute({
   path: '/kcp/apis',
   component: APIBindingsPage,
+  useClusterURL: true,
 });
 
 registerRoute({
   path: '/kcp/workspaces',
   component: WorkspacesPage,
+  useClusterURL: true,
 });
 
 registerSidebarEntry({
