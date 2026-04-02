@@ -1,5 +1,22 @@
 # RBAC for the dbaas-provisioner ServiceAccount (namespace: default) to manage
 # the Headlamp workspace kubeconfig Secret and trigger rolling restarts.
+#
+# Also grants the headlamp ServiceAccount cluster-wide read access so the
+# "kind" kubeconfig context (kubernetes.default.svc) can browse cluster resources.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp-cluster-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: headlamp
+  namespace: headlamp
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

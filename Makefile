@@ -25,6 +25,7 @@ HELM_KRO_VALUES := deploy/kro/kro-values.yaml
 HELM_HEADLAMP_CHART  := headlamp/headlamp
 HELM_HEADLAMP_NS     := headlamp
 HELM_HEADLAMP_VALUES := deploy/headlamp/values.yaml
+HEADLAMP_PLUGIN_DIR  := headlamp-plugin/kcp
 
 # ── API Sync Agent ───────────────────────────────────────────────────────────────
 HELM_AGENT_CHART := kcp/api-syncagent
@@ -205,10 +206,25 @@ undeploy-kro:
 	$(HELM) uninstall kro -n $(HELM_KRO_NS) || true
 
 # ── Headlamp ──────────────────────────────────────────────────────────────────
-.PHONY: deploy-headlamp undeploy-headlamp
-deploy-headlamp:
+.PHONY: build-headlamp-plugin deploy-headlamp-plugin bootstrap-headlamp-kubeconfig deploy-headlamp undeploy-headlamp
+
+build-headlamp-plugin:
+	cd $(HEADLAMP_PLUGIN_DIR) && npm ci && npx headlamp-plugin build
+
+deploy-headlamp-plugin: build-headlamp-plugin
+	$(KUBECTL) create configmap headlamp-kcp-plugin \
+	  -n $(HELM_HEADLAMP_NS) \
+	  --from-file=main.js=$(HEADLAMP_PLUGIN_DIR)/dist/main.js \
+	  '--from-literal=package.json={"name":"kcp","version":"0.1.0"}' \
+	  --dry-run=client -o yaml | $(KUBECTL) apply -f -
+
+bootstrap-headlamp-kubeconfig:
+	python3 scripts/bootstrap_headlamp_kubeconfig.py
+
+deploy-headlamp: deploy-headlamp-plugin
 	$(KUBECTL) apply -f deploy/headlamp/kubeconfig-secret.yaml
 	$(KUBECTL) apply -f deploy/headlamp/rbac.yaml
+	python3 scripts/bootstrap_headlamp_kubeconfig.py
 	$(HELM) upgrade --install headlamp $(HELM_HEADLAMP_CHART) \
 	  -n $(HELM_HEADLAMP_NS) --create-namespace \
 	  -f $(HELM_HEADLAMP_VALUES)
@@ -217,6 +233,7 @@ deploy-headlamp:
 
 undeploy-headlamp:
 	$(HELM) uninstall headlamp -n $(HELM_HEADLAMP_NS) || true
+	$(KUBECTL) delete configmap headlamp-kcp-plugin -n $(HELM_HEADLAMP_NS) --ignore-not-found
 	$(KUBECTL) delete -f deploy/headlamp/rbac.yaml --ignore-not-found
 	$(KUBECTL) delete -f deploy/headlamp/kubeconfig-secret.yaml --ignore-not-found
 

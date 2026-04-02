@@ -17,8 +17,14 @@ volumeMounts:
   - name: workspace-kubeconfig
     mountPath: /kubeconfigs
     readOnly: true
+  - name: kcp-plugin
+    mountPath: /headlamp/plugins/kcp
+    readOnly: true
 
 volumes:
   - name: workspace-kubeconfig
     secret:
       secretName: headlamp-workspace-kubeconfig
+  - name: kcp-plugin
+    configMap:
+      name: headlamp-kcp-plugin
