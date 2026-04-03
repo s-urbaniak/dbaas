@@ -42,6 +42,7 @@ High-level flow:
 - [ko](https://ko.build/) to build and load Go container images
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) to interact with the
   cluster and KCP
+- Python >= 3.10 for the deploy UI and Headlamp kubeconfig bootstrap scripts
 - Go >= 1.22 for local builds
 
 ### Deploy everything
