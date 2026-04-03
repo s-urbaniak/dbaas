@@ -329,7 +329,7 @@ The provisioner creates `root:consumers:tenant-a` in KCP, binds the `mongodataba
 ```bash
 export KUBECONFIG=/path/to/tenant-a.kubeconfig
 
-# on-premise MongoDB (creates MCK MongoDB + Atlas FlexCluster child resources)
+# on-premise MongoDB (creates the MCK MongoDB child resource)
 kubectl apply -f - <<EOF
 apiVersion: kro.run/v1alpha1
 kind: MongoDBDatabase
@@ -344,7 +344,7 @@ spec:
   storage: 10Gi
 EOF
 
-# cloud Atlas FlexCluster (same — both child resources always created, see kro limitations)
+# cloud Atlas FlexCluster (creates the Atlas FlexCluster child resource)
 kubectl apply -f - <<EOF
 apiVersion: kro.run/v1alpha1
 kind: MongoDBDatabase
@@ -365,9 +365,9 @@ EOF
 
 ```bash
 kubectl get mongodbdatabases
-# NAME           PROVIDER     STATE     READY
-# my-onprem-db   ON-PREMISE   Running   True
-# my-atlas-db    AWS          Running   True
+# NAME           PROVIDER     STATE    READY
+# my-onprem-db   ON-PREMISE   ACTIVE   True
+# my-atlas-db    AWS                   False
 
 kubectl get mongodatabase my-onprem-db -o jsonpath='{.status}'
 ```
@@ -442,14 +442,12 @@ kro's SimpleSchema does not support the `default` keyword for scalar fields
 A `type kind mismatch` error on `schema.spec.*` fields indicates you are running
 kro < v0.6.3 — upgrade to v0.9.0+.
 
-**Status CEL: excluded resources cause nil-ref errors**
-CEL expressions in `spec.schema.status` can only reference child resource IDs
-(`mckMongoDB`, `atlasFlexCluster`). Neither `schema.*` nor `instance.*` resolves
-to the current instance. More importantly, referencing a child resource that was
-excluded via `includeWhen` results in a nil-reference error at runtime (kro issue
-[#509](https://github.com/kro-run/kro/issues/509), still open). As a workaround
-the PoC only surfaces `mckMongoDB` status; `atlasFlexCluster` status is not
-reflected in `MongoDBDatabase.status`.
+**Status CEL is still asymmetric across branches**
+The current graph status block only copies data from the `mckMongoDB` branch.
+That keeps the on-prem path useful, but it means the Atlas branch does not yet
+surface equivalent `state` and `connectionString` fields through
+`MongoDBDatabase.status`. The Atlas child object is still created and reconciled;
+the limitation is in what the graph currently exposes back on the top-level API.
 
 ---
 
