@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { makeCustomResourceClass } from '@kinvolk/headlamp-plugin/lib/Crd';
-import { SectionBox, NameValueTable, MetadataDisplay } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { clusterRequest } from '@kinvolk/headlamp-plugin/lib/ApiProxy';
+import { SectionBox, NameValueTable } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
 import Drawer from '@mui/material/Drawer';
@@ -25,6 +26,19 @@ const Workspace = makeCustomResourceClass({
   isNamespaced: false,
 });
 
+// Normalised workspace item — works for both KubeObject results (jsonData wrapper)
+// and raw JSON returned by request().
+interface WsItem {
+  metadata: { name: string; creationTimestamp?: string; labels?: Record<string, string> };
+  jsonData: any;
+}
+
+function normalize(raw: any): WsItem {
+  // KubeObjects from useList() already have .jsonData; plain objects from request() don't.
+  if (raw.jsonData) return raw as WsItem;
+  return { metadata: raw.metadata ?? {}, jsonData: raw };
+}
+
 function wsPath(url?: string): string {
   if (!url) return '';
   const idx = url.indexOf('/clusters/');
@@ -38,9 +52,13 @@ function phaseBadgeColor(phase?: string): 'success' | 'warning' | 'default' | 'e
   return 'default';
 }
 
-function WorkspaceDetailPane({ item, onClose }: { item: any; onClose: () => void }) {
-  const phase = item.jsonData?.status?.phase;
-  const url = item.jsonData?.spec?.URL;
+// ── Detail pane ───────────────────────────────────────────────────────────────
+
+function WorkspaceDetailPane({ item, onClose }: { item: WsItem; onClose: () => void }) {
+  const d = item.jsonData;
+  const phase = d?.status?.phase;
+  const url = d?.spec?.URL;
+  const labels = item.metadata?.labels ?? {};
 
   return (
     <Box sx={{ width: '50vw', p: 2, overflowY: 'auto', height: '100%', pt: '64px' }}>
@@ -51,7 +69,17 @@ function WorkspaceDetailPane({ item, onClose }: { item: any; onClose: () => void
         </IconButton>
       </Box>
 
-      <MetadataDisplay resource={item} />
+      <SectionBox title="Details">
+        <NameValueTable
+          rows={[
+            { name: 'Name', value: item.metadata?.name ?? '—' },
+            { name: 'Created', value: item.metadata?.creationTimestamp ?? '—' },
+            ...(Object.keys(labels).length > 0
+              ? [{ name: 'Labels', value: Object.entries(labels).map(([k, v]) => `${k}=${v}`).join(', ') }]
+              : []),
+          ]}
+        />
+      </SectionBox>
 
       <SectionBox title="Status">
         <NameValueTable
@@ -65,34 +93,102 @@ function WorkspaceDetailPane({ item, onClose }: { item: any; onClose: () => void
   );
 }
 
-interface WorkspaceNodeProps {
-  name: string;
-  phase?: string;
-  url?: string;
-  currentPath: string;
-  indent: number;
-  onClick: () => void;
-}
+// ── Recursive tree node ───────────────────────────────────────────────────────
 
-function WorkspaceNode({ name, phase, url, currentPath, indent, onClick }: WorkspaceNodeProps) {
+function WorkspaceTreeNode({
+  ws,
+  depth,
+  onSelect,
+}: {
+  ws: WsItem;
+  depth: number;
+  onSelect: (ws: WsItem) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [children, setChildren] = useState<WsItem[] | null>(null);
+  const [childError, setChildError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const specURL = ws.jsonData?.spec?.URL;
+  const phase = ws.jsonData?.status?.phase;
+  const path = wsPath(specURL);
+  // Headlamp cluster context name is the last segment of the KCP workspace path,
+  // e.g. "root:consumers:test" → "test".
+  const clusterName = path.split(':').pop() ?? '';
+
+  const handleToggle = () => {
+    if (!expanded && children === null && !loading) {
+      setLoading(true);
+      clusterRequest('/apis/tenancy.kcp.io/v1alpha1/workspaces', { cluster: clusterName })
+        .then((data: any) => {
+          setChildren((data?.items ?? []).map(normalize));
+          setLoading(false);
+        })
+        .catch((err: any) => {
+          setChildError(String(err));
+          setLoading(false);
+        });
+    }
+    setExpanded(e => !e);
+  };
+
+  const indent = depth * 24;
+
   return (
-    <Box sx={{ ml: `${indent}px`, mb: 0.75, display: 'flex', alignItems: 'center', gap: 1 }}>
-      <Typography variant="body2" color="text.secondary">└─</Typography>
-      <Link
-        component="button"
-        onClick={onClick}
-        sx={{ fontWeight: 500, cursor: 'pointer', background: 'none', border: 'none', padding: 0, fontSize: 'inherit', fontFamily: 'inherit' }}
-      >
-        {name}
-      </Link>
-      {phase && <Chip label={phase} color={phaseBadgeColor(phase)} size="small" sx={{ fontWeight: 600 }} />}
-      {url && <Typography variant="caption" color="text.secondary">{wsPath(url)}</Typography>}
-    </Box>
+    <>
+      <Box sx={{ pl: `${indent}px`, mb: 0.5, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+        <IconButton size="small" onClick={handleToggle} sx={{ p: 0.25 }}>
+          <Icon
+            icon={loading ? 'mdi:loading' : expanded ? 'mdi:chevron-down' : 'mdi:chevron-right'}
+            width={18}
+            style={loading ? { animation: 'spin 1s linear infinite' } : undefined}
+          />
+        </IconButton>
+        <Link
+          component="button"
+          onClick={() => onSelect(ws)}
+          sx={{ fontWeight: 500, cursor: 'pointer', background: 'none', border: 'none', padding: 0, fontSize: 'inherit', fontFamily: 'inherit' }}
+        >
+          {ws.metadata?.name}
+        </Link>
+        {phase && (
+          <Chip label={phase} color={phaseBadgeColor(phase)} size="small" sx={{ fontWeight: 600 }} />
+        )}
+        {path && (
+          <Typography variant="caption" color="text.secondary">{path}</Typography>
+        )}
+      </Box>
+
+      {expanded && (
+        <Box>
+          {childError && (
+            <Typography color="error" variant="caption" sx={{ pl: `${indent + 42}px` }}>
+              {childError}
+            </Typography>
+          )}
+          {!loading && children?.length === 0 && (
+            <Typography variant="caption" color="text.secondary" sx={{ pl: `${indent + 42}px` }}>
+              No child workspaces
+            </Typography>
+          )}
+          {children?.map(child => (
+            <WorkspaceTreeNode
+              key={child.metadata?.name}
+              ws={child}
+              depth={depth + 1}
+              onSelect={onSelect}
+            />
+          ))}
+        </Box>
+      )}
+    </>
   );
 }
 
+// ── Page ──────────────────────────────────────────────────────────────────────
+
 export default function WorkspacesPage() {
-  const [selectedWs, setSelectedWs] = useState<any>(null);
+  const [selectedWs, setSelectedWs] = useState<WsItem | null>(null);
   const [lc, lcError] = LogicalCluster.useGet('cluster') as [any, any];
   const [workspaces, wsError] = Workspace.useList() as [any[] | null, any];
 
@@ -122,22 +218,19 @@ export default function WorkspacesPage() {
         </Box>
 
         {wsError && (
-          <Typography color="warning.main" variant="body2" sx={{ ml: 3 }}>
+          <Typography color="warning.main" variant="body2" sx={{ ml: 1 }}>
             Could not list child workspaces: {String(wsError)}
           </Typography>
         )}
         {workspaces && workspaces.length === 0 && (
-          <Typography variant="body2" color="text.secondary" sx={{ ml: 3 }}>No child workspaces.</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ ml: 1 }}>No child workspaces.</Typography>
         )}
         {workspaces && workspaces.map((ws: any) => (
-          <WorkspaceNode
+          <WorkspaceTreeNode
             key={ws.metadata?.name}
-            name={ws.metadata?.name}
-            phase={ws.jsonData?.status?.phase}
-            url={ws.jsonData?.spec?.URL}
-            currentPath={currentPath}
-            indent={24}
-            onClick={() => setSelectedWs(ws)}
+            ws={normalize(ws)}
+            depth={0}
+            onSelect={setSelectedWs}
           />
         ))}
       </Box>
