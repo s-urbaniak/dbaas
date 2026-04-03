@@ -212,6 +212,8 @@ build-headlamp-plugin:
 	cd $(HEADLAMP_PLUGIN_DIR) && npm ci && npx headlamp-plugin build
 
 deploy-headlamp-plugin: build-headlamp-plugin
+	$(KUBECTL) create namespace $(HELM_HEADLAMP_NS) \
+	  --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(KUBECTL) create configmap headlamp-kcp-plugin \
 	  -n $(HELM_HEADLAMP_NS) \
 	  --from-file=main.js=$(HEADLAMP_PLUGIN_DIR)/dist/main.js \
@@ -224,10 +226,10 @@ bootstrap-headlamp-kubeconfig:
 deploy-headlamp: deploy-headlamp-plugin
 	$(KUBECTL) apply -f deploy/headlamp/kubeconfig-secret.yaml
 	$(KUBECTL) apply -f deploy/headlamp/rbac.yaml
-	python3 scripts/bootstrap_headlamp_kubeconfig.py
 	$(HELM) upgrade --install headlamp $(HELM_HEADLAMP_CHART) \
 	  -n $(HELM_HEADLAMP_NS) --create-namespace \
 	  -f $(HELM_HEADLAMP_VALUES)
+	python3 scripts/bootstrap_headlamp_kubeconfig.py
 	$(KUBECTL) -n $(HELM_HEADLAMP_NS) rollout status deployment/headlamp --timeout=120s
 	@echo "✓ Headlamp deployed → http://localhost:4466"
 
