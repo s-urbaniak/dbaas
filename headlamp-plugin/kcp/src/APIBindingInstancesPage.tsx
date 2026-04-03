@@ -339,6 +339,10 @@ function InstanceDetailPane({
   resource: APIBindingResourceMeta;
   onClose: () => void;
 }) {
+  const handleEditLaunch = React.useCallback(() => {
+    window.setTimeout(onClose, 0);
+  }, [onClose]);
+
   return (
     <Box sx={{ width: '50vw', overflowY: 'auto', height: '100%', pt: '64px' }}>
       <Box sx={{ px: 2, pb: 2 }}>
@@ -347,11 +351,9 @@ function InstanceDetailPane({
           backLink={null}
           noDefaultActions
           actions={[
-            <CommonComponents.Resource.EditButton
-              key="edit"
-              item={item}
-              afterConfirm={onClose}
-            />,
+            <Box key="edit" onClickCapture={handleEditLaunch}>
+              <CommonComponents.Resource.EditButton item={item} />
+            </Box>,
             <IconButton key="close" onClick={onClose} size="small">
               <Icon icon="mdi:close" />
             </IconButton>,

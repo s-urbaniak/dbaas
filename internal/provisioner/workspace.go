@@ -25,9 +25,12 @@ import (
 	"strings"
 	"time"
 
+	kcpapisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
+	kcpcorev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
+	kcptenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
+	kcpclientset "github.com/kcp-dev/sdk/client/clientset/versioned"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -49,21 +52,6 @@ func IsTransientPhase(phase string) bool {
 }
 
 var (
-	workspaceGVR = schema.GroupVersionResource{
-		Group:    "tenancy.kcp.io",
-		Version:  "v1alpha1",
-		Resource: "workspaces",
-	}
-	logicalClusterGVR = schema.GroupVersionResource{
-		Group:    "core.kcp.io",
-		Version:  "v1alpha1",
-		Resource: "logicalclusters",
-	}
-	apiBindingGVR = schema.GroupVersionResource{
-		Group:    "apis.kcp.io",
-		Version:  "v1alpha1",
-		Resource: "apibindings",
-	}
 	mongodbDatabaseGVR = schema.GroupVersionResource{
 		Group:    "kro.run",
 		Version:  "v1alpha1",
@@ -130,27 +118,35 @@ func (p *Provisioner) configForWorkspace(wsPath string) (*rest.Config, error) {
 	return cfg, nil
 }
 
+func (p *Provisioner) kcpClientForWorkspace(wsPath string) (kcpclientset.Interface, error) {
+	cfg, err := p.configForWorkspace(wsPath)
+	if err != nil {
+		return nil, err
+	}
+	return kcpclientset.NewForConfig(cfg)
+}
+
 // ProvisionWorkspace creates a new consumer workspace under ConsumersWorkspace and binds
 // the DBaaS APIExport into it. Returns the workspace URL from status once ready.
 func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (string, error) {
-	consumersCfg, err := p.configForWorkspace(p.ConsumersWorkspace)
+	consumersClient, err := p.kcpClientForWorkspace(p.ConsumersWorkspace)
 	if err != nil {
-		return "", err
-	}
-	consumersClient, err := dynamic.NewForConfig(consumersCfg)
-	if err != nil {
-		return "", fmt.Errorf("creating consumers dynamic client: %w", err)
+		return "", fmt.Errorf("creating consumers client: %w", err)
 	}
 
-	ws := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "tenancy.kcp.io/v1alpha1",
-		"kind":       "Workspace",
-		"metadata":   map[string]any{"name": name},
-		"spec": map[string]any{
-			"type": map[string]any{"name": "universal"},
+	ws := &kcptenancyv1alpha1.Workspace{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "tenancy.kcp.io/v1alpha1",
+			Kind:       "Workspace",
 		},
-	}}
-	if _, err := consumersClient.Resource(workspaceGVR).Create(ctx, ws, metav1.CreateOptions{}); err != nil {
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: kcptenancyv1alpha1.WorkspaceSpec{
+			Type: &kcptenancyv1alpha1.WorkspaceTypeReference{
+				Name: kcptenancyv1alpha1.WorkspaceTypeName("universal"),
+			},
+		},
+	}
+	if _, err := consumersClient.TenancyV1alpha1().Workspaces().Create(ctx, ws, metav1.CreateOptions{}); err != nil {
 		return "", fmt.Errorf("creating workspace %q: %w", name, err)
 	}
 
@@ -158,14 +154,12 @@ func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (stri
 	var wsURL string
 	if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, false,
 		func(ctx context.Context) (bool, error) {
-			obj, err := consumersClient.Resource(workspaceGVR).Get(ctx, name, metav1.GetOptions{})
+			workspace, err := consumersClient.TenancyV1alpha1().Workspaces().Get(ctx, name, metav1.GetOptions{})
 			if err != nil {
 				return false, nil // not found yet — keep polling
 			}
-			phase, _, _ := unstructured.NestedString(obj.Object, "status", "phase")
-			u, _, _ := unstructured.NestedString(obj.Object, "spec", "URL")
-			if phase == "Ready" && u != "" {
-				wsURL = u
+			if string(workspace.Status.Phase) == "Ready" && workspace.Spec.URL != "" {
+				wsURL = workspace.Spec.URL
 				return true, nil
 			}
 			return false, nil
@@ -176,13 +170,9 @@ func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (stri
 
 	// Create APIBinding in the new workspace.
 	wsPath := p.ConsumersWorkspace + ":" + name
-	wsCfg, err := p.configForWorkspace(wsPath)
+	wsClient, err := p.kcpClientForWorkspace(wsPath)
 	if err != nil {
-		return "", err
-	}
-	wsClient, err := dynamic.NewForConfig(wsCfg)
-	if err != nil {
-		return "", fmt.Errorf("creating workspace dynamic client: %w", err)
+		return "", fmt.Errorf("creating workspace client: %w", err)
 	}
 
 	if err := p.ensureWorkspaceBinding(ctx, wsClient); err != nil {
@@ -193,33 +183,35 @@ func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (stri
 	return wsURL, nil
 }
 
-func (p *Provisioner) desiredWorkspaceBinding() *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "apis.kcp.io/v1alpha1",
-		"kind":       "APIBinding",
-		"metadata":   map[string]any{"name": "dbaas"},
-		"spec": map[string]any{
-			"reference": map[string]any{
-				"export": map[string]any{
-					"name": p.ExportName,
-					"path": p.ProviderWorkspace,
+func (p *Provisioner) desiredWorkspaceBinding() *kcpapisv1alpha1.APIBinding {
+	return &kcpapisv1alpha1.APIBinding{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "apis.kcp.io/v1alpha1",
+			Kind:       "APIBinding",
+		},
+		ObjectMeta: metav1.ObjectMeta{Name: "dbaas"},
+		Spec: kcpapisv1alpha1.APIBindingSpec{
+			Reference: kcpapisv1alpha1.BindingReference{
+				Export: &kcpapisv1alpha1.ExportBindingReference{
+					Name: p.ExportName,
+					Path: p.ProviderWorkspace,
 				},
 			},
 		},
-	}}
+	}
 }
 
 func (p *Provisioner) ensureWorkspaceBinding(
 	ctx context.Context,
-	wsClient dynamic.Interface,
+	wsClient kcpclientset.Interface,
 ) error {
-	if _, err := wsClient.Resource(apiBindingGVR).Get(ctx, "dbaas", metav1.GetOptions{}); err == nil {
+	if _, err := wsClient.ApisV1alpha1().APIBindings().Get(ctx, "dbaas", metav1.GetOptions{}); err == nil {
 		return nil
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
 
-	_, err := wsClient.Resource(apiBindingGVR).Create(
+	_, err := wsClient.ApisV1alpha1().APIBindings().Create(
 		ctx,
 		p.desiredWorkspaceBinding(),
 		metav1.CreateOptions{},
@@ -229,58 +221,48 @@ func (p *Provisioner) ensureWorkspaceBinding(
 
 // GetWorkspaceURL returns the URL of an existing consumer workspace.
 func (p *Provisioner) GetWorkspaceURL(ctx context.Context, name string) (string, error) {
-	consumersCfg, err := p.configForWorkspace(p.ConsumersWorkspace)
+	consumersClient, err := p.kcpClientForWorkspace(p.ConsumersWorkspace)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("creating consumers client: %w", err)
 	}
-	consumersClient, err := dynamic.NewForConfig(consumersCfg)
-	if err != nil {
-		return "", err
-	}
-	obj, err := consumersClient.Resource(workspaceGVR).Get(ctx, name, metav1.GetOptions{})
+	workspace, err := consumersClient.TenancyV1alpha1().Workspaces().Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return "", fmt.Errorf("getting workspace %q: %w", name, err)
 	}
-	u, _, _ := unstructured.NestedString(obj.Object, "spec", "URL")
-	if u == "" {
+	if workspace.Spec.URL == "" {
 		return "", fmt.Errorf("workspace %q has no URL (not ready yet?)", name)
 	}
-	return u, nil
+	return workspace.Spec.URL, nil
 }
 
 // ListWorkspaces returns all consumer workspaces under ConsumersWorkspace.
 func (p *Provisioner) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, error) {
-	consumersCfg, err := p.configForWorkspace(p.ConsumersWorkspace)
+	consumersClient, err := p.kcpClientForWorkspace(p.ConsumersWorkspace)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating consumers client: %w", err)
 	}
-	consumersClient, err := dynamic.NewForConfig(consumersCfg)
-	if err != nil {
-		return nil, err
-	}
-	list, err := consumersClient.Resource(workspaceGVR).List(ctx, metav1.ListOptions{})
+	list, err := consumersClient.TenancyV1alpha1().Workspaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("listing workspaces: %w", err)
 	}
 	result := make([]WorkspaceInfo, 0, len(list.Items))
-	for _, item := range list.Items {
-		phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
-		u, _, _ := unstructured.NestedString(item.Object, "spec", "URL")
+	for _, workspace := range list.Items {
+		phase := string(workspace.Status.Phase)
 		info := WorkspaceInfo{
-			Name:        item.GetName(),
+			Name:        workspace.Name,
 			Phase:       phase,
 			Status:      phase,
 			StatusClass: "warning text-dark",
-			URL:         u,
+			URL:         workspace.Spec.URL,
 		}
 
-		if item.GetDeletionTimestamp() != nil {
+		if workspace.DeletionTimestamp != nil {
 			phase = "Terminating"
 			info.Phase = phase
 			info.Status = "Terminating"
 			info.StatusClass = "secondary"
 			info.Transient = true
-			info.Status, info.StatusDetail = p.logicalClusterDeletionStatus(ctx, item)
+			info.Status, info.StatusDetail = p.logicalClusterDeletionStatus(ctx, workspace)
 			if info.Status == "Finalizing parent" {
 				info.StatusClass = "info"
 			} else if info.Status == "Deleting content" {
@@ -293,7 +275,7 @@ func (p *Provisioner) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, erro
 		if phase == "Ready" {
 			info.Status = "Ready"
 			info.StatusClass = "success"
-			info.DatabaseCount = p.countDatabases(ctx, p.ConsumersWorkspace+":"+item.GetName())
+			info.DatabaseCount = p.countDatabases(ctx, p.ConsumersWorkspace+":"+workspace.Name)
 		} else if phase != "" {
 			info.Transient = IsTransientPhase(phase)
 		} else {
@@ -307,14 +289,9 @@ func (p *Provisioner) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, erro
 
 func (p *Provisioner) logicalClusterDeletionStatus(
 	ctx context.Context,
-	workspace unstructured.Unstructured,
+	workspace kcptenancyv1alpha1.Workspace,
 ) (string, string) {
-	const (
-		logicalClusterObjectName    = "cluster"
-		workspaceContentDeletedType = "WorkspaceContentDeleted"
-	)
-
-	clusterName, _, _ := unstructured.NestedString(workspace.Object, "spec", "cluster")
+	clusterName := workspace.Spec.Cluster
 	if clusterName == "" {
 		return "Finalizing parent", "Waiting for workspace cleanup after scheduling metadata removal."
 	}
@@ -323,16 +300,12 @@ func (p *Provisioner) logicalClusterDeletionStatus(
 	if err != nil {
 		return "Terminating", ""
 	}
-	client, err := dynamic.NewForConfig(cfg)
+	client, err := kcpclientset.NewForConfig(cfg)
 	if err != nil {
 		return "Terminating", ""
 	}
 
-	logicalCluster, err := client.Resource(logicalClusterGVR).Get(
-		ctx,
-		logicalClusterObjectName,
-		metav1.GetOptions{},
-	)
+	cluster, err := client.CoreV1alpha1().LogicalClusters().Get(ctx, kcpcorev1alpha1.LogicalClusterName, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return "Finalizing parent", "LogicalCluster is gone; waiting for the parent Workspace object to be removed."
@@ -340,28 +313,20 @@ func (p *Provisioner) logicalClusterDeletionStatus(
 		return "Terminating", ""
 	}
 
-	conditions, _, _ := unstructured.NestedSlice(logicalCluster.Object, "status", "conditions")
-	for _, rawCondition := range conditions {
-		condition, ok := rawCondition.(map[string]any)
-		if !ok {
+	for _, condition := range cluster.Status.Conditions {
+		if condition.Type != kcptenancyv1alpha1.WorkspaceContentDeleted {
 			continue
 		}
-		if condition["type"] != workspaceContentDeletedType {
-			continue
-		}
-
-		message, _ := condition["message"].(string)
-		status, _ := condition["status"].(string)
-		if status == "True" {
+		if condition.Status == "True" {
 			return "Finalizing parent", "Workspace content is deleted; waiting for the parent Workspace object to be removed."
 		}
-		if message != "" {
-			return "Deleting content", message
+		if condition.Message != "" {
+			return "Deleting content", condition.Message
 		}
 		return "Deleting content", ""
 	}
 
-	if !logicalCluster.GetDeletionTimestamp().IsZero() {
+	if cluster.DeletionTimestamp != nil && !cluster.DeletionTimestamp.IsZero() {
 		return "Deleting content", "LogicalCluster deletion is in progress."
 	}
 
@@ -389,15 +354,11 @@ func (p *Provisioner) countDatabases(ctx context.Context, wsPath string) int {
 // DeleteWorkspace deletes a consumer workspace under ConsumersWorkspace and
 // waits until the workspace is fully removed from the API.
 func (p *Provisioner) DeleteWorkspace(ctx context.Context, name string) error {
-	consumersCfg, err := p.configForWorkspace(p.ConsumersWorkspace)
+	consumersClient, err := p.kcpClientForWorkspace(p.ConsumersWorkspace)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating consumers client: %w", err)
 	}
-	consumersClient, err := dynamic.NewForConfig(consumersCfg)
-	if err != nil {
-		return fmt.Errorf("creating consumers dynamic client: %w", err)
-	}
-	if err := consumersClient.Resource(workspaceGVR).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+	if err := consumersClient.TenancyV1alpha1().Workspaces().Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 		return fmt.Errorf("deleting workspace %q: %w", name, err)
 	}
 	go p.syncHeadlamp(p.ProcessContext, name, false)
@@ -430,7 +391,7 @@ func (p *Provisioner) ReconcileWorkspaceBindings(ctx context.Context) {
 				"workspace", workspace.Name, "err", err)
 			continue
 		}
-		client, err := dynamic.NewForConfig(cfg)
+		client, err := kcpclientset.NewForConfig(cfg)
 		if err != nil {
 			slog.Error("workspace binding reconcile: client workspace",
 				"workspace", workspace.Name, "err", err)
