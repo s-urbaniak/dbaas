@@ -73,6 +73,8 @@ var (
 
 // Provisioner creates and manages KCP consumer workspaces.
 type Provisioner struct {
+	// ProcessContext is canceled when the provisioner process is shutting down.
+	ProcessContext context.Context
 	// AdminConfig is the KCP admin REST config. Its Host may include a /clusters/... path.
 	AdminConfig *rest.Config
 	// ProviderWorkspace is the KCP path of the service-provider workspace (e.g. "root:dbaas-provider").
@@ -183,7 +185,16 @@ func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (stri
 		return "", fmt.Errorf("creating workspace dynamic client: %w", err)
 	}
 
-	binding := &unstructured.Unstructured{Object: map[string]any{
+	if err := p.ensureWorkspaceBinding(ctx, wsClient); err != nil {
+		return "", fmt.Errorf("creating APIBinding in workspace %q: %w", name, err)
+	}
+
+	go p.syncHeadlamp(p.ProcessContext, name, true)
+	return wsURL, nil
+}
+
+func (p *Provisioner) desiredWorkspaceBinding() *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "apis.kcp.io/v1alpha1",
 		"kind":       "APIBinding",
 		"metadata":   map[string]any{"name": "dbaas"},
@@ -196,12 +207,24 @@ func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (stri
 			},
 		},
 	}}
-	if _, err := wsClient.Resource(apiBindingGVR).Create(ctx, binding, metav1.CreateOptions{}); err != nil {
-		return "", fmt.Errorf("creating APIBinding in workspace %q: %w", name, err)
+}
+
+func (p *Provisioner) ensureWorkspaceBinding(
+	ctx context.Context,
+	wsClient dynamic.Interface,
+) error {
+	if _, err := wsClient.Resource(apiBindingGVR).Get(ctx, "dbaas", metav1.GetOptions{}); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
 	}
 
-	go p.syncHeadlamp(context.Background(), name, true)
-	return wsURL, nil
+	_, err := wsClient.Resource(apiBindingGVR).Create(
+		ctx,
+		p.desiredWorkspaceBinding(),
+		metav1.CreateOptions{},
+	)
+	return err
 }
 
 // GetWorkspaceURL returns the URL of an existing consumer workspace.
@@ -377,7 +400,7 @@ func (p *Provisioner) DeleteWorkspace(ctx context.Context, name string) error {
 	if err := consumersClient.Resource(workspaceGVR).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 		return fmt.Errorf("deleting workspace %q: %w", name, err)
 	}
-	go p.syncHeadlamp(context.Background(), name, false)
+	go p.syncHeadlamp(p.ProcessContext, name, false)
 	return nil
 }
 
@@ -385,6 +408,39 @@ func (p *Provisioner) DeleteWorkspace(ctx context.Context, name string) error {
 // consumer workspace set. It is safe to call periodically.
 func (p *Provisioner) ReconcileHeadlamp(ctx context.Context) {
 	p.syncHeadlamp(ctx, "", false)
+}
+
+// ReconcileWorkspaceBindings ensures all non-terminating consumer workspaces have
+// the expected DBaaS APIBinding.
+func (p *Provisioner) ReconcileWorkspaceBindings(ctx context.Context) {
+	workspaces, err := p.ListWorkspaces(ctx)
+	if err != nil {
+		slog.Error("workspace binding reconcile: list workspaces", "err", err)
+		return
+	}
+
+	for _, workspace := range workspaces {
+		if workspace.Transient {
+			continue
+		}
+
+		cfg, err := p.configForWorkspace(p.ConsumersWorkspace + ":" + workspace.Name)
+		if err != nil {
+			slog.Error("workspace binding reconcile: config workspace",
+				"workspace", workspace.Name, "err", err)
+			continue
+		}
+		client, err := dynamic.NewForConfig(cfg)
+		if err != nil {
+			slog.Error("workspace binding reconcile: client workspace",
+				"workspace", workspace.Name, "err", err)
+			continue
+		}
+		if err := p.ensureWorkspaceBinding(ctx, client); err != nil {
+			slog.Error("workspace binding reconcile: ensure binding",
+				"workspace", workspace.Name, "err", err)
+		}
+	}
 }
 
 // syncHeadlamp adds (add=true) or removes (add=false) a workspace context from

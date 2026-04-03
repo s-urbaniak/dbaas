@@ -114,9 +114,50 @@
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    // Auto-refresh every 3 s while any workspace is in a transient phase.
+    // Auto-refresh every 3 s while any workspace is in a transient phase, but
+    // never while a modal dialog is open or the create form is being edited.
     if (document.querySelector('.ws-transient')) {
-      setTimeout(() => location.reload(), 3000);
+      let refreshTimer = null;
+      const createForm = document.querySelector('form[action="/api/workspaces"]');
+      const createInput = createForm?.querySelector('input[name="name"]');
+
+      function scheduleRefresh() {
+        const createFormActive =
+          !!createInput &&
+          (document.activeElement === createInput || createInput.value.trim() !== '');
+
+        if (refreshTimer || document.querySelector('.modal.show') || createFormActive) {
+          return;
+        }
+        refreshTimer = setTimeout(() => location.reload(), 3000);
+      }
+
+      function cancelRefresh() {
+        if (!refreshTimer) {
+          return;
+        }
+        clearTimeout(refreshTimer);
+        refreshTimer = null;
+      }
+
+      document.querySelectorAll('.modal').forEach(modal => {
+        modal.addEventListener('show.bs.modal', cancelRefresh);
+        modal.addEventListener('hidden.bs.modal', scheduleRefresh);
+      });
+
+      if (createInput) {
+        createInput.addEventListener('focus', cancelRefresh);
+        createInput.addEventListener('input', () => {
+          cancelRefresh();
+          if (createInput.value.trim() === '' &&
+              document.activeElement !== createInput) {
+            scheduleRefresh();
+          }
+        });
+        createInput.addEventListener('blur', scheduleRefresh);
+      }
+
+      scheduleRefresh();
     }
   </script>
 </body>

@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"flag"
 	"fmt"
 	"html/template"
@@ -26,6 +27,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -47,6 +50,13 @@ type pageData struct {
 }
 
 func main() {
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
 	var (
 		addr               string
 		kubeconfigPath     string
@@ -84,6 +94,7 @@ func main() {
 	}
 
 	prov := &provisioner.Provisioner{
+		ProcessContext:     ctx,
 		AdminConfig:        cfg,
 		ProviderWorkspace:  providerWorkspace,
 		ExportName:         exportName,
@@ -100,23 +111,47 @@ func main() {
 	mux.HandleFunc("GET /api/workspaces/{name}/kubeconfig", handleKubeconfig(prov))
 	mux.HandleFunc("POST /api/workspaces/{name}/delete", handleDeleteWorkspace(prov))
 
-	go startHeadlampReconcileLoop(prov)
+	server := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+	}
+
+	go startHeadlampReconcileLoop(ctx, prov)
+	go shutdownServerOnSignal(ctx, server)
 
 	slog.Info("starting provisioner", "addr", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server error", "err", err)
 		os.Exit(1)
 	}
 }
 
-func startHeadlampReconcileLoop(prov *provisioner.Provisioner) {
-	prov.ReconcileHeadlamp(context.Background())
+func startHeadlampReconcileLoop(ctx context.Context, prov *provisioner.Provisioner) {
+	prov.ReconcileHeadlamp(ctx)
+	prov.ReconcileWorkspaceBindings(ctx)
 
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		prov.ReconcileHeadlamp(context.Background())
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			prov.ReconcileHeadlamp(ctx)
+			prov.ReconcileWorkspaceBindings(ctx)
+		}
+	}
+}
+
+func shutdownServerOnSignal(ctx context.Context, server *http.Server) {
+	<-ctx.Done()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		slog.Error("server shutdown error", "err", err)
 	}
 }
 
