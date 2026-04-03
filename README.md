@@ -12,7 +12,7 @@ Operator](https://github.com/mongodb/mongodb-atlas-kubernetes),
 depending on `spec.provider`.
 
 For the full architecture, authentication model, deploy internals, and
-resource lifecycle, see [dbaas.md](/home/sur/src/dbaas/dbaas.md).
+resource lifecycle, see [dbaas.md](dbaas.md).
 
 ## What This Demo Does
 
@@ -198,9 +198,8 @@ KO_DOCKER_REPO=kind.local make ko-apply
 
 ## Further Reading
 
-- [dbaas.md](/home/sur/src/dbaas/dbaas.md) for the full architecture and
-  operations guide
-- [Makefile](/home/sur/src/dbaas/Makefile) for the deploy pipeline
+- [dbaas.md](dbaas.md) for the full architecture and operations guide
+- [Makefile](Makefile) for the deploy pipeline
 - `config/kro/mongodatabase-rgd.yaml` for the generated `MongoDBDatabase` API
 
 Current known limitations:

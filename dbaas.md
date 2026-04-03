@@ -1,7 +1,7 @@
 # DBaaS Architecture and Operations
 
-For setup and day-one usage, start with
-[README.md](/home/sur/src/dbaas/README.md). This document is the canonical
+For setup and day-one usage, start with [README.md](README.md). This document
+is the canonical
 architecture and operations reference for the repository as it exists today.
 
 ## Overview
@@ -224,9 +224,8 @@ They simulate backend behavior rather than provisioning real infrastructure.
 ### Provisioner
 
 The provisioner is a small Go HTTP server in
-[main.go](/home/sur/src/dbaas/cmd/provisioner/main.go) backed by workspace
-logic in
-[workspace.go](/home/sur/src/dbaas/internal/provisioner/workspace.go).
+[main.go](cmd/provisioner/main.go) backed by workspace logic in
+[workspace.go](internal/provisioner/workspace.go).
 
 It uses the published KCP SDK clientset directly for KCP-native resources:
 
@@ -401,11 +400,11 @@ Important deploy details:
 
 Key paths in the current repository:
 
-- [Makefile](/home/sur/src/dbaas/Makefile)
+- [Makefile](Makefile)
 - `config/kro/mongodatabase-rgd.yaml`
-- [main.go](/home/sur/src/dbaas/cmd/provisioner/main.go)
-- [index.html](/home/sur/src/dbaas/cmd/provisioner/static/index.html)
-- [workspace.go](/home/sur/src/dbaas/internal/provisioner/workspace.go)
-- [index.tsx](/home/sur/src/dbaas/headlamp-plugin/kcp/src/index.tsx)
+- [main.go](cmd/provisioner/main.go)
+- [index.html](cmd/provisioner/static/index.html)
+- [workspace.go](internal/provisioner/workspace.go)
+- [index.tsx](headlamp-plugin/kcp/src/index.tsx)
 - `headlamp-plugin/kcp/src/APIBindingsPage.tsx`
 - `headlamp-plugin/kcp/src/APIBindingInstancesPage.tsx`
