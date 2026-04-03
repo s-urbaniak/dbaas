@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Utils } from '@kinvolk/headlamp-plugin/lib';
 import { makeCustomResourceClass } from '@kinvolk/headlamp-plugin/lib/Crd';
 import { request } from '@kinvolk/headlamp-plugin/lib/ApiProxy';
 import {
@@ -14,6 +15,14 @@ import IconButton from '@mui/material/IconButton';
 import Link from '@mui/material/Link';
 import Typography from '@mui/material/Typography';
 import { Icon } from '@iconify/react';
+import { generatePath } from 'react-router';
+import { useHistory } from 'react-router-dom';
+import {
+  encodeResourceKey,
+  makeResourceRoutePath,
+  useAPIBindingResources,
+  useRegisterAPIBindingResourceSidebarEntries,
+} from './apiBindingResources';
 
 const APIBinding = makeCustomResourceClass({
   apiInfo: [{ group: 'apis.kcp.io', version: 'v1alpha1' }],
@@ -218,8 +227,11 @@ function SchemaDetail({ row, onClose }: { row: BoundRow; onClose: () => void }) 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function APIBindingsPage() {
+  const history = useHistory();
   const [selected, setSelected] = useState<BoundRow | null>(null);
   const [bindings, error] = APIBinding.useList() as [any[] | null, any];
+  const { resources } = useAPIBindingResources();
+  useRegisterAPIBindingResourceSidebarEntries(resources);
 
   const flatRows: BoundRow[] = (bindings ?? []).flatMap((binding: any) =>
     (binding.jsonData?.status?.boundResources ?? []).map((r: any) => ({
@@ -249,6 +261,51 @@ export default function APIBindingsPage() {
                   {row.resource}
                 </Link>
               ),
+            },
+            {
+              label: 'Instances',
+              getter: (row: BoundRow) => {
+                const version = row.storageVersions[0];
+                if (!version) {
+                  return '—';
+                }
+
+                const path = makeResourceRoutePath({
+                  key: encodeResourceKey(row.group, version, row.resource),
+                  id: '',
+                  group: row.group,
+                  version,
+                  resource: row.resource,
+                  kind: row.resource,
+                  singularName: row.resource,
+                  pluralName: row.resource,
+                  isNamespaced: true,
+                  bindingNames: [row.bindingName],
+                });
+
+                return (
+                  <Link
+                    component="button"
+                    onClick={() =>
+                      history.push({
+                        pathname: generatePath(Utils.getClusterPrefixedPath(path), {
+                          cluster: Utils.getCluster() ?? '',
+                        }),
+                      })
+                    }
+                    sx={{
+                      cursor: 'pointer',
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      fontSize: 'inherit',
+                      fontFamily: 'inherit',
+                    }}
+                  >
+                    View
+                  </Link>
+                );
+              },
             },
             { label: 'Versions', getter: (row: BoundRow) => row.storageVersions.join(', ') },
             { label: 'API Binding', getter: (row: BoundRow) => row.bindingName },

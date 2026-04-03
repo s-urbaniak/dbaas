@@ -22,8 +22,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -51,6 +53,11 @@ var (
 		Group:    "tenancy.kcp.io",
 		Version:  "v1alpha1",
 		Resource: "workspaces",
+	}
+	logicalClusterGVR = schema.GroupVersionResource{
+		Group:    "core.kcp.io",
+		Version:  "v1alpha1",
+		Resource: "logicalclusters",
 	}
 	apiBindingGVR = schema.GroupVersionResource{
 		Group:    "apis.kcp.io",
@@ -90,6 +97,10 @@ type Provisioner struct {
 type WorkspaceInfo struct {
 	Name          string
 	Phase         string
+	Status        string
+	StatusClass   string
+	StatusDetail  string
+	Transient     bool
 	URL           string
 	DatabaseCount int
 }
@@ -232,16 +243,106 @@ func (p *Provisioner) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, erro
 	for _, item := range list.Items {
 		phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
 		u, _, _ := unstructured.NestedString(item.Object, "spec", "URL")
+		info := WorkspaceInfo{
+			Name:        item.GetName(),
+			Phase:       phase,
+			Status:      phase,
+			StatusClass: "warning text-dark",
+			URL:         u,
+		}
+
 		if item.GetDeletionTimestamp() != nil {
 			phase = "Terminating"
+			info.Phase = phase
+			info.Status = "Terminating"
+			info.StatusClass = "secondary"
+			info.Transient = true
+			info.Status, info.StatusDetail = p.logicalClusterDeletionStatus(ctx, item)
+			if info.Status == "Finalizing parent" {
+				info.StatusClass = "info"
+			} else if info.Status == "Deleting content" {
+				info.StatusClass = "secondary"
+			}
+			result = append(result, info)
+			continue
 		}
-		info := WorkspaceInfo{Name: item.GetName(), Phase: phase, URL: u}
+
 		if phase == "Ready" {
+			info.Status = "Ready"
+			info.StatusClass = "success"
 			info.DatabaseCount = p.countDatabases(ctx, p.ConsumersWorkspace+":"+item.GetName())
+		} else if phase != "" {
+			info.Transient = IsTransientPhase(phase)
+		} else {
+			info.Status = "—"
 		}
+
 		result = append(result, info)
 	}
 	return result, nil
+}
+
+func (p *Provisioner) logicalClusterDeletionStatus(
+	ctx context.Context,
+	workspace unstructured.Unstructured,
+) (string, string) {
+	const (
+		logicalClusterObjectName    = "cluster"
+		workspaceContentDeletedType = "WorkspaceContentDeleted"
+	)
+
+	clusterName, _, _ := unstructured.NestedString(workspace.Object, "spec", "cluster")
+	if clusterName == "" {
+		return "Finalizing parent", "Waiting for workspace cleanup after scheduling metadata removal."
+	}
+
+	cfg, err := p.configForWorkspace(clusterName)
+	if err != nil {
+		return "Terminating", ""
+	}
+	client, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return "Terminating", ""
+	}
+
+	logicalCluster, err := client.Resource(logicalClusterGVR).Get(
+		ctx,
+		logicalClusterObjectName,
+		metav1.GetOptions{},
+	)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return "Finalizing parent", "LogicalCluster is gone; waiting for the parent Workspace object to be removed."
+		}
+		return "Terminating", ""
+	}
+
+	conditions, _, _ := unstructured.NestedSlice(logicalCluster.Object, "status", "conditions")
+	for _, rawCondition := range conditions {
+		condition, ok := rawCondition.(map[string]any)
+		if !ok {
+			continue
+		}
+		if condition["type"] != workspaceContentDeletedType {
+			continue
+		}
+
+		message, _ := condition["message"].(string)
+		status, _ := condition["status"].(string)
+		if status == "True" {
+			return "Finalizing parent", "Workspace content is deleted; waiting for the parent Workspace object to be removed."
+		}
+		if message != "" {
+			return "Deleting content", message
+		}
+		return "Deleting content", ""
+	}
+
+	if !logicalCluster.GetDeletionTimestamp().IsZero() {
+		return "Deleting content", "LogicalCluster deletion is in progress."
+	}
+
+	return "Terminating", ""
 }
 
 // countDatabases returns the number of MongoDBDatabase resources in the given workspace.
@@ -276,8 +377,14 @@ func (p *Provisioner) DeleteWorkspace(ctx context.Context, name string) error {
 	if err := consumersClient.Resource(workspaceGVR).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 		return fmt.Errorf("deleting workspace %q: %w", name, err)
 	}
-	p.syncHeadlamp(ctx, name, false)
+	go p.syncHeadlamp(context.Background(), name, false)
 	return nil
+}
+
+// ReconcileHeadlamp refreshes the Headlamp workspace kubeconfig from the current
+// consumer workspace set. It is safe to call periodically.
+func (p *Provisioner) ReconcileHeadlamp(ctx context.Context) {
+	p.syncHeadlamp(ctx, "", false)
 }
 
 // syncHeadlamp adds (add=true) or removes (add=false) a workspace context from
@@ -305,11 +412,25 @@ func (p *Provisioner) syncHeadlamp(ctx context.Context, wsName string, add bool)
 		cfg = clientcmdapi.NewConfig()
 	}
 
+	desiredWorkspaces, err := p.listHeadlampWorkspaceNames(ctx)
+	if err != nil {
+		slog.Error("headlamp sync: list consumer workspaces", "err", err)
+		return
+	}
+
 	if add {
+		desiredWorkspaces[wsName] = struct{}{}
+	} else {
+		delete(desiredWorkspaces, wsName)
+	}
+
+	p.removeStaleHeadlampWorkspaces(cfg, desiredWorkspaces)
+
+	for workspaceName := range desiredWorkspaces {
 		cluster := clientcmdapi.NewCluster()
 		cluster.Server = fmt.Sprintf(
 			"https://kcp-front-proxy.kcp.svc.cluster.local:8443/clusters/%s:%s",
-			p.ConsumersWorkspace, wsName,
+			p.ConsumersWorkspace, workspaceName,
 		)
 		cluster.InsecureSkipTLSVerify = p.AdminConfig.Insecure
 		if !cluster.InsecureSkipTLSVerify {
@@ -329,16 +450,12 @@ func (p *Provisioner) syncHeadlamp(ctx context.Context, wsName string, add bool)
 		}
 
 		kubeCtx := clientcmdapi.NewContext()
-		kubeCtx.Cluster = wsName
-		kubeCtx.AuthInfo = wsName
+		kubeCtx.Cluster = workspaceName
+		kubeCtx.AuthInfo = workspaceName
 
-		cfg.Clusters[wsName] = cluster
-		cfg.AuthInfos[wsName] = authInfo
-		cfg.Contexts[wsName] = kubeCtx
-	} else {
-		delete(cfg.Clusters, wsName)
-		delete(cfg.AuthInfos, wsName)
-		delete(cfg.Contexts, wsName)
+		cfg.Clusters[workspaceName] = cluster
+		cfg.AuthInfos[workspaceName] = authInfo
+		cfg.Contexts[workspaceName] = kubeCtx
 	}
 
 	data, err := clientcmd.Write(*cfg)
@@ -362,6 +479,45 @@ func (p *Provisioner) syncHeadlamp(ctx context.Context, wsName string, add bool)
 		ctx, p.HeadlampDeployment, types.MergePatchType, []byte(patch), metav1.PatchOptions{},
 	); err != nil {
 		slog.Error("headlamp sync: restart deployment", "err", err)
+	}
+}
+
+func (p *Provisioner) listHeadlampWorkspaceNames(
+	ctx context.Context,
+) (map[string]struct{}, error) {
+	workspaces, err := p.ListWorkspaces(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	names := make(map[string]struct{}, len(workspaces))
+	for _, workspace := range workspaces {
+		if workspace.Phase == "Terminating" {
+			continue
+		}
+		names[workspace.Name] = struct{}{}
+	}
+
+	return names, nil
+}
+
+func (p *Provisioner) removeStaleHeadlampWorkspaces(
+	cfg *clientcmdapi.Config,
+	desiredWorkspaces map[string]struct{},
+) {
+	managedPrefix := fmt.Sprintf("/clusters/%s:", p.ConsumersWorkspace)
+
+	for name, cluster := range cfg.Clusters {
+		if !strings.Contains(cluster.Server, managedPrefix) {
+			continue
+		}
+		if _, keep := desiredWorkspaces[name]; keep {
+			continue
+		}
+
+		delete(cfg.Clusters, name)
+		delete(cfg.AuthInfos, name)
+		delete(cfg.Contexts, name)
 	}
 }
 

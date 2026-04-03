@@ -40,34 +40,34 @@
           <thead>
             <tr>
               <th>Name</th>
-              <th>Phase</th>
+              <th>Status</th>
               <th>Databases</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             {{range .Workspaces}}
-            <tr {{if eq .Phase "Terminating"}}class="ws-transient opacity-50"{{end}}>
+            <tr {{if .Transient}}class="ws-transient opacity-50"{{end}}>
               <td><strong>{{.Name}}</strong></td>
               <td>
-                {{if eq .Phase "Terminating"}}
-                <span class="badge bg-secondary d-inline-flex align-items-center gap-1">
+                {{if .Transient}}
+                <span class="badge bg-{{.StatusClass}} d-inline-flex align-items-center gap-1">
                   <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                  Terminating
+                  {{if .Status}}{{.Status}}{{else}}Working{{end}}
                 </span>
-                {{else if eq .Phase "Ready"}}
-                <span class="badge bg-success">Ready</span>
                 {{else}}
-                <span class="badge bg-warning text-dark ws-transient">
-                  <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                  {{if .Phase}}{{.Phase}}{{else}}—{{end}}
+                <span class="badge bg-{{.StatusClass}}">
+                  {{if .Status}}{{.Status}}{{else}}—{{end}}
                 </span>
+                {{end}}
+                {{if .StatusDetail}}
+                <div class="small text-muted mt-1">{{.StatusDetail}}</div>
                 {{end}}
               </td>
               <td>{{.DatabaseCount}}</td>
               <td>
                 <div class="d-flex gap-2">
-                  {{if eq .Phase "Ready"}}
+                  {{if not .Transient}}
                   <a class="btn btn-sm btn-outline-primary"
                      href="/api/workspaces/{{.Name}}/kubeconfig"
                      download="{{.Name}}.kubeconfig">↓ kubeconfig</a>
@@ -76,7 +76,7 @@
                      target="_blank" rel="noopener">↗ Headlamp</a>
                   {{end}}
                   <button class="btn btn-sm btn-outline-danger"
-                          {{if eq .Phase "Terminating"}}disabled{{else}}data-bs-toggle="modal" data-bs-target="#del-{{.Name}}"{{end}}>Delete</button>
+                          {{if .Transient}}disabled{{else}}data-bs-toggle="modal" data-bs-target="#del-{{.Name}}"{{end}}>Delete</button>
                 </div>
               </td>
             </tr>

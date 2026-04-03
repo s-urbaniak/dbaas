@@ -17,6 +17,7 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	_ "embed"
 	"flag"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -98,10 +100,23 @@ func main() {
 	mux.HandleFunc("GET /api/workspaces/{name}/kubeconfig", handleKubeconfig(prov))
 	mux.HandleFunc("POST /api/workspaces/{name}/delete", handleDeleteWorkspace(prov))
 
+	go startHeadlampReconcileLoop(prov)
+
 	slog.Info("starting provisioner", "addr", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		slog.Error("server error", "err", err)
 		os.Exit(1)
+	}
+}
+
+func startHeadlampReconcileLoop(prov *provisioner.Provisioner) {
+	prov.ReconcileHeadlamp(context.Background())
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		prov.ReconcileHeadlamp(context.Background())
 	}
 }
 

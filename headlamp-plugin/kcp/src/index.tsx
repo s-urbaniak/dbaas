@@ -1,5 +1,6 @@
 import { registerRoute, registerSidebarEntry } from '@kinvolk/headlamp-plugin/lib';
 import APIBindingsPage from './APIBindingsPage';
+import APIBindingInstancesPage from './APIBindingInstancesPage';
 import WorkspacesPage from './WorkspacesPage';
 
 registerSidebarEntry({
@@ -30,12 +31,48 @@ registerSidebarEntry({
   sidebar: 'IN-CLUSTER',
 });
 
+registerSidebarEntry({
+  parent: 'kcp-apibindings',
+  name: 'kcp-apibindings-instances',
+  label: 'Instances',
+  url: '/kcp/apibindings/instances',
+  useClusterURL: true,
+  sidebar: 'IN-CLUSTER',
+});
+
+registerRoute({
+  path: '/kcp/apibindings/instances/:resourceKey/:namespace/:name',
+  component: APIBindingInstancesPage,
+  useClusterURL: true,
+  sidebar: 'kcp-apibindings-instances',
+  name: 'kcp-apibinding-instance-detail',
+});
+
+registerRoute({
+  path: '/kcp/apibindings/instances/:resourceKey',
+  component: APIBindingInstancesPage,
+  useClusterURL: true,
+  sidebar: 'kcp-apibindings-instances',
+  name: 'kcp-apibinding-instance-list',
+  exact: true,
+});
+
+registerRoute({
+  path: '/kcp/apibindings/instances',
+  component: APIBindingInstancesPage,
+  useClusterURL: true,
+  sidebar: 'kcp-apibindings-instances',
+  name: 'kcp-apibindings-instances',
+  exact: true,
+});
+
 registerRoute({
   path: '/kcp/apibindings',
   component: APIBindingsPage,
   useClusterURL: true,
   sidebar: 'kcp-apibindings',
   name: 'kcp-apibindings',
+  exact: true,
 });
 
 registerRoute({
@@ -44,4 +81,5 @@ registerRoute({
   useClusterURL: true,
   sidebar: 'kcp-workspaces',
   name: 'kcp-workspaces',
+  exact: true,
 });
