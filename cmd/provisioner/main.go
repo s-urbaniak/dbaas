@@ -127,8 +127,8 @@ func main() {
 }
 
 func startHeadlampReconcileLoop(ctx context.Context, prov *provisioner.Provisioner) {
-	prov.ReconcileHeadlamp(ctx)
 	prov.ReconcileWorkspaceBindings(ctx)
+	prov.ReconcileHeadlamp(ctx)
 
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -138,8 +138,8 @@ func startHeadlampReconcileLoop(ctx context.Context, prov *provisioner.Provision
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			prov.ReconcileHeadlamp(ctx)
 			prov.ReconcileWorkspaceBindings(ctx)
+			prov.ReconcileHeadlamp(ctx)
 		}
 	}
 }
@@ -206,12 +206,16 @@ func handleDeleteWorkspace(prov *provisioner.Provisioner) http.HandlerFunc {
 func handleKubeconfig(prov *provisioner.Provisioner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("name")
-		wsURL, err := prov.GetWorkspaceURL(r.Context(), name)
+		workspace, err := prov.GetWorkspace(r.Context(), name)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		data, err := prov.KubeconfigBytes(wsURL)
+		if workspace.Spec.URL == "" {
+			http.Error(w, fmt.Sprintf("workspace %q has no URL (not ready yet?)", name), http.StatusConflict)
+			return
+		}
+		data, err := prov.KubeconfigBytes(r.Context(), workspace)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

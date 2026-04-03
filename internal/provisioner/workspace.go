@@ -29,6 +29,8 @@ import (
 	kcpcorev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
 	kcptenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 	kcpclientset "github.com/kcp-dev/sdk/client/clientset/versioned"
+	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -57,6 +59,21 @@ var (
 		Version:  "v1alpha1",
 		Resource: "mongodbdatabases",
 	}
+)
+
+const (
+	workspaceCredentialAnnotation = "dbaas.mongodb.com/scoped-kubeconfig"
+	workspaceServiceAccountName   = "workspace-admin"
+	workspaceTokenSecretName      = "workspace-admin-token"
+	workspaceClusterRoleBindName  = "workspace-service-account-admin"
+	workspaceDefaultNamespace     = "default"
+)
+
+type workspaceCredentialMode string
+
+const (
+	workspaceCredentialsAdmin  workspaceCredentialMode = "admin"
+	workspaceCredentialsScoped workspaceCredentialMode = "scoped"
 )
 
 // Provisioner creates and manages KCP consumer workspaces.
@@ -126,6 +143,14 @@ func (p *Provisioner) kcpClientForWorkspace(wsPath string) (kcpclientset.Interfa
 	return kcpclientset.NewForConfig(cfg)
 }
 
+func (p *Provisioner) kubeClientForWorkspace(wsPath string) (kubernetes.Interface, error) {
+	cfg, err := p.configForWorkspace(wsPath)
+	if err != nil {
+		return nil, err
+	}
+	return kubernetes.NewForConfig(cfg)
+}
+
 // ProvisionWorkspace creates a new consumer workspace under ConsumersWorkspace and binds
 // the DBaaS APIExport into it. Returns the workspace URL from status once ready.
 func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (string, error) {
@@ -179,6 +204,13 @@ func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (stri
 		return "", fmt.Errorf("creating APIBinding in workspace %q: %w", name, err)
 	}
 
+	if err := p.ensureScopedWorkspaceCredentials(ctx, wsPath); err != nil {
+		return "", fmt.Errorf("creating scoped credentials in workspace %q: %w", name, err)
+	}
+	if err := p.markWorkspaceScopedCredentials(ctx, consumersClient, name); err != nil {
+		return "", fmt.Errorf("marking workspace %q for scoped credentials: %w", name, err)
+	}
+
 	go p.syncHeadlamp(p.ProcessContext, name, true)
 	return wsURL, nil
 }
@@ -221,13 +253,9 @@ func (p *Provisioner) ensureWorkspaceBinding(
 
 // GetWorkspaceURL returns the URL of an existing consumer workspace.
 func (p *Provisioner) GetWorkspaceURL(ctx context.Context, name string) (string, error) {
-	consumersClient, err := p.kcpClientForWorkspace(p.ConsumersWorkspace)
+	workspace, err := p.GetWorkspace(ctx, name)
 	if err != nil {
-		return "", fmt.Errorf("creating consumers client: %w", err)
-	}
-	workspace, err := consumersClient.TenancyV1alpha1().Workspaces().Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return "", fmt.Errorf("getting workspace %q: %w", name, err)
+		return "", err
 	}
 	if workspace.Spec.URL == "" {
 		return "", fmt.Errorf("workspace %q has no URL (not ready yet?)", name)
@@ -235,13 +263,25 @@ func (p *Provisioner) GetWorkspaceURL(ctx context.Context, name string) (string,
 	return workspace.Spec.URL, nil
 }
 
-// ListWorkspaces returns all consumer workspaces under ConsumersWorkspace.
-func (p *Provisioner) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, error) {
+// GetWorkspace returns an existing consumer workspace object.
+func (p *Provisioner) GetWorkspace(
+	ctx context.Context,
+	name string,
+) (*kcptenancyv1alpha1.Workspace, error) {
 	consumersClient, err := p.kcpClientForWorkspace(p.ConsumersWorkspace)
 	if err != nil {
 		return nil, fmt.Errorf("creating consumers client: %w", err)
 	}
-	list, err := consumersClient.TenancyV1alpha1().Workspaces().List(ctx, metav1.ListOptions{})
+	workspace, err := consumersClient.TenancyV1alpha1().Workspaces().Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("getting workspace %q: %w", name, err)
+	}
+	return workspace, nil
+}
+
+// ListWorkspaces returns all consumer workspaces under ConsumersWorkspace.
+func (p *Provisioner) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, error) {
+	list, err := p.listConsumerWorkspaces(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing workspaces: %w", err)
 	}
@@ -285,6 +325,16 @@ func (p *Provisioner) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, erro
 		result = append(result, info)
 	}
 	return result, nil
+}
+
+func (p *Provisioner) listConsumerWorkspaces(
+	ctx context.Context,
+) (*kcptenancyv1alpha1.WorkspaceList, error) {
+	consumersClient, err := p.kcpClientForWorkspace(p.ConsumersWorkspace)
+	if err != nil {
+		return nil, fmt.Errorf("creating consumers client: %w", err)
+	}
+	return consumersClient.TenancyV1alpha1().Workspaces().List(ctx, metav1.ListOptions{})
 }
 
 func (p *Provisioner) logicalClusterDeletionStatus(
@@ -374,24 +424,19 @@ func (p *Provisioner) ReconcileHeadlamp(ctx context.Context) {
 // ReconcileWorkspaceBindings ensures all non-terminating consumer workspaces have
 // the expected DBaaS APIBinding.
 func (p *Provisioner) ReconcileWorkspaceBindings(ctx context.Context) {
-	workspaces, err := p.ListWorkspaces(ctx)
+	workspaces, err := p.listConsumerWorkspaces(ctx)
 	if err != nil {
 		slog.Error("workspace binding reconcile: list workspaces", "err", err)
 		return
 	}
 
-	for _, workspace := range workspaces {
-		if workspace.Transient {
+	for _, workspace := range workspaces.Items {
+		if workspace.DeletionTimestamp != nil || IsTransientPhase(string(workspace.Status.Phase)) {
 			continue
 		}
 
-		cfg, err := p.configForWorkspace(p.ConsumersWorkspace + ":" + workspace.Name)
-		if err != nil {
-			slog.Error("workspace binding reconcile: config workspace",
-				"workspace", workspace.Name, "err", err)
-			continue
-		}
-		client, err := kcpclientset.NewForConfig(cfg)
+		wsPath := p.ConsumersWorkspace + ":" + workspace.Name
+		client, err := p.kcpClientForWorkspace(wsPath)
 		if err != nil {
 			slog.Error("workspace binding reconcile: client workspace",
 				"workspace", workspace.Name, "err", err)
@@ -399,6 +444,13 @@ func (p *Provisioner) ReconcileWorkspaceBindings(ctx context.Context) {
 		}
 		if err := p.ensureWorkspaceBinding(ctx, client); err != nil {
 			slog.Error("workspace binding reconcile: ensure binding",
+				"workspace", workspace.Name, "err", err)
+		}
+		if p.workspaceCredentialMode(workspace) != workspaceCredentialsScoped {
+			continue
+		}
+		if err := p.ensureScopedWorkspaceCredentials(ctx, wsPath); err != nil {
+			slog.Error("workspace binding reconcile: ensure scoped credentials",
 				"workspace", workspace.Name, "err", err)
 		}
 	}
@@ -429,21 +481,32 @@ func (p *Provisioner) syncHeadlamp(ctx context.Context, wsName string, add bool)
 		cfg = clientcmdapi.NewConfig()
 	}
 
-	desiredWorkspaces, err := p.listHeadlampWorkspaceNames(ctx)
+	workspaces, err := p.listConsumerWorkspaces(ctx)
 	if err != nil {
 		slog.Error("headlamp sync: list consumer workspaces", "err", err)
 		return
 	}
 
-	if add {
-		desiredWorkspaces[wsName] = struct{}{}
-	} else {
-		delete(desiredWorkspaces, wsName)
+	desiredWorkspaces := make(map[string]kcptenancyv1alpha1.Workspace, len(workspaces.Items))
+	for _, workspace := range workspaces.Items {
+		if workspace.DeletionTimestamp != nil {
+			continue
+		}
+		desiredWorkspaces[workspace.Name] = workspace
 	}
 
 	p.removeStaleHeadlampWorkspaces(cfg, desiredWorkspaces)
 
-	for workspaceName := range desiredWorkspaces {
+	if add && wsName != "" {
+		workspace, err := p.GetWorkspace(ctx, wsName)
+		if err == nil && workspace.DeletionTimestamp == nil {
+			desiredWorkspaces[wsName] = *workspace
+		}
+	} else if !add && wsName != "" {
+		delete(desiredWorkspaces, wsName)
+	}
+
+	for workspaceName, workspace := range desiredWorkspaces {
 		cluster := clientcmdapi.NewCluster()
 		cluster.Server = fmt.Sprintf(
 			"https://kcp-front-proxy.kcp.svc.cluster.local:8443/clusters/%s:%s",
@@ -455,15 +518,25 @@ func (p *Provisioner) syncHeadlamp(ctx context.Context, wsName string, add bool)
 		}
 
 		authInfo := clientcmdapi.NewAuthInfo()
-		switch {
-		case p.AdminConfig.BearerToken != "":
-			authInfo.Token = p.AdminConfig.BearerToken
-		case len(p.AdminConfig.CertData) > 0:
-			authInfo.ClientCertificateData = p.AdminConfig.CertData
-			authInfo.ClientKeyData = p.AdminConfig.KeyData
-		default:
-			authInfo.ClientCertificate = p.AdminConfig.CertFile
-			authInfo.ClientKey = p.AdminConfig.KeyFile
+		if p.workspaceCredentialMode(workspace) == workspaceCredentialsScoped {
+			token, err := p.workspaceServiceAccountToken(ctx, p.ConsumersWorkspace+":"+workspaceName)
+			if err != nil {
+				slog.Error("headlamp sync: read workspace token",
+					"workspace", workspaceName, "err", err)
+				continue
+			}
+			authInfo.Token = token
+		} else {
+			switch {
+			case p.AdminConfig.BearerToken != "":
+				authInfo.Token = p.AdminConfig.BearerToken
+			case len(p.AdminConfig.CertData) > 0:
+				authInfo.ClientCertificateData = p.AdminConfig.CertData
+				authInfo.ClientKeyData = p.AdminConfig.KeyData
+			default:
+				authInfo.ClientCertificate = p.AdminConfig.CertFile
+				authInfo.ClientKey = p.AdminConfig.KeyFile
+			}
 		}
 
 		kubeCtx := clientcmdapi.NewContext()
@@ -499,28 +572,9 @@ func (p *Provisioner) syncHeadlamp(ctx context.Context, wsName string, add bool)
 	}
 }
 
-func (p *Provisioner) listHeadlampWorkspaceNames(
-	ctx context.Context,
-) (map[string]struct{}, error) {
-	workspaces, err := p.ListWorkspaces(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	names := make(map[string]struct{}, len(workspaces))
-	for _, workspace := range workspaces {
-		if workspace.Phase == "Terminating" {
-			continue
-		}
-		names[workspace.Name] = struct{}{}
-	}
-
-	return names, nil
-}
-
 func (p *Provisioner) removeStaleHeadlampWorkspaces(
 	cfg *clientcmdapi.Config,
-	desiredWorkspaces map[string]struct{},
+	desiredWorkspaces map[string]kcptenancyv1alpha1.Workspace,
 ) {
 	managedPrefix := fmt.Sprintf("/clusters/%s:", p.ConsumersWorkspace)
 
@@ -538,40 +592,247 @@ func (p *Provisioner) removeStaleHeadlampWorkspaces(
 	}
 }
 
-// KubeconfigBytes generates a kubeconfig YAML for the given workspace URL,
-// copying TLS and auth credentials from the admin config.
-//
-// NOTE (dev only): this reuses the admin token. In production, issue a
-// per-workspace ServiceAccount token or use OIDC.
-func (p *Provisioner) KubeconfigBytes(wsURL string) ([]byte, error) {
+// KubeconfigBytes generates a kubeconfig YAML for the given workspace.
+// Newly provisioned workspaces use a workspace-scoped service account token.
+// Existing workspaces continue to use the admin-derived config until migrated.
+func (p *Provisioner) KubeconfigBytes(
+	ctx context.Context,
+	workspace *kcptenancyv1alpha1.Workspace,
+) ([]byte, error) {
 	cluster := clientcmdapi.NewCluster()
-	cluster.Server = wsURL
+	cluster.Server = workspace.Spec.URL
 	cluster.InsecureSkipTLSVerify = p.AdminConfig.Insecure
 	if !cluster.InsecureSkipTLSVerify {
 		cluster.CertificateAuthorityData = p.AdminConfig.CAData
 	}
 
 	authInfo := clientcmdapi.NewAuthInfo()
-	switch {
-	case p.AdminConfig.BearerToken != "":
-		authInfo.Token = p.AdminConfig.BearerToken
-	case len(p.AdminConfig.CertData) > 0:
-		authInfo.ClientCertificateData = p.AdminConfig.CertData
-		authInfo.ClientKeyData = p.AdminConfig.KeyData
-	default:
-		authInfo.ClientCertificate = p.AdminConfig.CertFile
-		authInfo.ClientKey = p.AdminConfig.KeyFile
+	if p.workspaceCredentialMode(*workspace) == workspaceCredentialsScoped {
+		token, err := p.workspaceServiceAccountToken(
+			ctx, p.ConsumersWorkspace+":"+workspace.Name,
+		)
+		if err != nil {
+			return nil, err
+		}
+		authInfo.Token = token
+	} else {
+		switch {
+		case p.AdminConfig.BearerToken != "":
+			authInfo.Token = p.AdminConfig.BearerToken
+		case len(p.AdminConfig.CertData) > 0:
+			authInfo.ClientCertificateData = p.AdminConfig.CertData
+			authInfo.ClientKeyData = p.AdminConfig.KeyData
+		default:
+			authInfo.ClientCertificate = p.AdminConfig.CertFile
+			authInfo.ClientKey = p.AdminConfig.KeyFile
+		}
 	}
 
 	kubeCtx := clientcmdapi.NewContext()
 	kubeCtx.Cluster = "kcp"
-	kubeCtx.AuthInfo = "admin"
+	if p.workspaceCredentialMode(*workspace) == workspaceCredentialsScoped {
+		kubeCtx.AuthInfo = workspaceServiceAccountName
+	} else {
+		kubeCtx.AuthInfo = "admin"
+	}
 
 	cfg := clientcmdapi.NewConfig()
 	cfg.Clusters["kcp"] = cluster
-	cfg.AuthInfos["admin"] = authInfo
+	cfg.AuthInfos[kubeCtx.AuthInfo] = authInfo
 	cfg.Contexts["workspace"] = kubeCtx
 	cfg.CurrentContext = "workspace"
 
 	return clientcmd.Write(*cfg)
+}
+
+func (p *Provisioner) ensureScopedWorkspaceCredentials(
+	ctx context.Context,
+	wsPath string,
+) error {
+	client, err := p.kubeClientForWorkspace(wsPath)
+	if err != nil {
+		return fmt.Errorf("creating workspace kube client: %w", err)
+	}
+
+	if err := p.ensureWorkspaceNamespace(ctx, client); err != nil {
+		return err
+	}
+
+	if _, err := client.CoreV1().ServiceAccounts(workspaceDefaultNamespace).Get(
+		ctx, workspaceServiceAccountName, metav1.GetOptions{},
+	); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("getting service account: %w", err)
+		}
+		if _, err := client.CoreV1().ServiceAccounts(workspaceDefaultNamespace).Create(
+			ctx,
+			&corev1.ServiceAccount{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      workspaceServiceAccountName,
+					Namespace: workspaceDefaultNamespace,
+				},
+			},
+			metav1.CreateOptions{},
+		); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("creating service account: %w", err)
+		}
+	}
+
+	if _, err := client.CoreV1().Secrets(workspaceDefaultNamespace).Get(
+		ctx, workspaceTokenSecretName, metav1.GetOptions{},
+	); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("getting token secret: %w", err)
+		}
+		if _, err := client.CoreV1().Secrets(workspaceDefaultNamespace).Create(
+			ctx,
+			&corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      workspaceTokenSecretName,
+					Namespace: workspaceDefaultNamespace,
+					Annotations: map[string]string{
+						corev1.ServiceAccountNameKey: workspaceServiceAccountName,
+					},
+				},
+				Type: corev1.SecretTypeServiceAccountToken,
+			},
+			metav1.CreateOptions{},
+		); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("creating token secret: %w", err)
+		}
+	}
+
+	desiredSubject := rbacv1.Subject{
+		Kind:      rbacv1.ServiceAccountKind,
+		Namespace: workspaceDefaultNamespace,
+		Name:      workspaceServiceAccountName,
+	}
+	desiredBinding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: workspaceClusterRoleBindName},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: rbacv1.GroupName,
+			Kind:     "ClusterRole",
+			Name:     "cluster-admin",
+		},
+		Subjects: []rbacv1.Subject{desiredSubject},
+	}
+
+	binding, err := client.RbacV1().ClusterRoleBindings().Get(
+		ctx, workspaceClusterRoleBindName, metav1.GetOptions{},
+	)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("getting cluster role binding: %w", err)
+		}
+		if _, err := client.RbacV1().ClusterRoleBindings().Create(
+			ctx, desiredBinding, metav1.CreateOptions{},
+		); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("creating cluster role binding: %w", err)
+		}
+	} else if len(binding.Subjects) != 1 ||
+		binding.Subjects[0] != desiredSubject ||
+		binding.RoleRef != desiredBinding.RoleRef {
+		binding.Subjects = desiredBinding.Subjects
+		binding.RoleRef = desiredBinding.RoleRef
+		if _, err := client.RbacV1().ClusterRoleBindings().Update(
+			ctx, binding, metav1.UpdateOptions{},
+		); err != nil {
+			return fmt.Errorf("updating cluster role binding: %w", err)
+		}
+	}
+
+	if _, err := p.workspaceServiceAccountToken(ctx, wsPath); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (p *Provisioner) ensureWorkspaceNamespace(
+	ctx context.Context,
+	client kubernetes.Interface,
+) error {
+	if _, err := client.CoreV1().Namespaces().Get(
+		ctx, workspaceDefaultNamespace, metav1.GetOptions{},
+	); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("getting namespace %q: %w", workspaceDefaultNamespace, err)
+		}
+		if _, err := client.CoreV1().Namespaces().Create(
+			ctx,
+			&corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: workspaceDefaultNamespace},
+			},
+			metav1.CreateOptions{},
+		); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("creating namespace %q: %w", workspaceDefaultNamespace, err)
+		}
+	}
+	return nil
+}
+
+func (p *Provisioner) workspaceServiceAccountToken(
+	ctx context.Context,
+	wsPath string,
+) (string, error) {
+	client, err := p.kubeClientForWorkspace(wsPath)
+	if err != nil {
+		return "", fmt.Errorf("creating workspace kube client: %w", err)
+	}
+
+	var token string
+	if err := wait.PollUntilContextTimeout(
+		ctx, time.Second, 30*time.Second, false,
+		func(ctx context.Context) (bool, error) {
+			secret, err := client.CoreV1().Secrets(workspaceDefaultNamespace).Get(
+				ctx, workspaceTokenSecretName, metav1.GetOptions{},
+			)
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					return false, nil
+				}
+				return false, err
+			}
+			rawToken := secret.Data["token"]
+			if len(rawToken) == 0 {
+				return false, nil
+			}
+			token = string(rawToken)
+			return true, nil
+		},
+	); err != nil {
+		return "", fmt.Errorf("waiting for workspace token secret: %w", err)
+	}
+
+	return token, nil
+}
+
+func (p *Provisioner) markWorkspaceScopedCredentials(
+	ctx context.Context,
+	consumersClient kcpclientset.Interface,
+	name string,
+) error {
+	workspace, err := consumersClient.TenancyV1alpha1().Workspaces().Get(
+		ctx, name, metav1.GetOptions{},
+	)
+	if err != nil {
+		return err
+	}
+	if workspace.Annotations == nil {
+		workspace.Annotations = map[string]string{}
+	}
+	workspace.Annotations[workspaceCredentialAnnotation] = "true"
+	_, err = consumersClient.TenancyV1alpha1().Workspaces().Update(
+		ctx, workspace, metav1.UpdateOptions{},
+	)
+	return err
+}
+
+func (p *Provisioner) workspaceCredentialMode(
+	workspace kcptenancyv1alpha1.Workspace,
+) workspaceCredentialMode {
+	if workspace.Annotations[workspaceCredentialAnnotation] == "true" {
+		return workspaceCredentialsScoped
+	}
+	return workspaceCredentialsAdmin
 }

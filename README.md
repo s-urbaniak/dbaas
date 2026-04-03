@@ -131,8 +131,9 @@ KCP workspace: root:consumers:test  (cluster ID: 1agg86w8arvo93ki)
 ```
 
 The tenant's kubeconfig points at the KCP front-proxy. From the tenant's
-perspective this is a normal `kubectl apply`. The workspace only exposes the
-`MongoDBDatabase` CRD (via `APIBinding`) — no other resources are visible.
+perspective this is a normal `kubectl apply`. Newly provisioned workspaces use
+their own workspace-local service account token, so the credential can
+administer that workspace but not other workspaces or root.
 
 ### 2 — API Sync Agent syncs the object to the physical cluster
 
@@ -322,7 +323,15 @@ Tenants self-service their own workspace via the provisioner UI:
 2. Enter a workspace name (e.g. `tenant-a`) and click **Provision**.
 3. Once the workspace is `Ready`, click **↓ kubeconfig** to download, or **↗ Headlamp** to open the workspace directly in the Headlamp Kubernetes GUI.
 
-The provisioner creates `root:consumers:tenant-a` in KCP, binds the `mongodatabases.dbaas.mongodb.com` APIExport from `root:dbaas-provider`, and returns a kubeconfig scoped to that workspace. From inside the workspace the only visible CRD is `MongoDBDatabase`.
+The provisioner creates `root:consumers:tenant-a` in KCP, binds the
+`mongodatabases.dbaas.mongodb.com` APIExport from `root:dbaas-provider`,
+creates a workspace-local service account bound to `cluster-admin` inside that
+workspace, and returns a kubeconfig built from that service account token. From
+inside the workspace the only visible CRD is `MongoDBDatabase`.
+
+Newly provisioned workspaces use this scoped credential model for both
+downloaded kubeconfigs and Headlamp contexts. Existing workspaces keep their
+older admin-derived credentials until they are migrated.
 
 ### Create a database
 
@@ -511,10 +520,12 @@ cert with the same `kcp-ca`, without `insecureSkipTLSVerify`.
 **(2) Admin client certificate** — `deploy/kcp/admin-cert.yaml` requests a
 cert-manager `Certificate` issued by `kcp-front-proxy-client-issuer` (backed by
 `kcp-front-proxy-client-ca`). The resulting secret `kcp-admin-client-cert` is
-embedded into every kubeconfig. `make get-kcp-kubeconfig` assembles the
-self-contained kubeconfig at `/tmp/kcp-admin.kubeconfig` by inlining the
-`kcp-ca` cert and the `kcp-admin-client-cert` cert+key directly as base64 data
-fields.
+used for the provisioner and other cluster-side components.
+`make get-kcp-kubeconfig` assembles the self-contained admin kubeconfig at
+`/tmp/kcp-admin.kubeconfig` by inlining the `kcp-ca` cert and the
+`kcp-admin-client-cert` cert+key directly as base64 data fields. Newly created
+tenant kubeconfigs are generated separately from workspace-local service
+account tokens.
 
 **(3) Combined CA patch** — The KCP workspace controller authenticates directly
 to the KCP API server (`kcp:6443/services/initializingworkspaces`) using a cert

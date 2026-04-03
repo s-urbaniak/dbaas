@@ -151,11 +151,15 @@ Current provisioner responsibilities:
 - create a consumer workspace under `root:consumers`
 - wait for the workspace to become ready and expose `Spec.URL`
 - create the `dbaas` APIBinding in that workspace
-- generate a tenant kubeconfig
+- create a workspace-local service account, token secret, and
+  `ClusterRoleBinding`
+- generate a tenant kubeconfig from that workspace-scoped token for new
+  workspaces
 - delete consumer workspaces
 - derive better deletion state from the child `LogicalCluster`
 - reconcile missing APIBindings across existing workspaces
-- reconcile the Headlamp workspace kubeconfig
+- reconcile the Headlamp workspace kubeconfig, using the same scoped token
+  model for newly provisioned workspaces
 
 The provisioner process is signal-aware and shuts down from a root context
 created with `signal.NotifyContext`, so in-cluster `SIGTERM` and local
@@ -173,6 +177,11 @@ The provisioner keeps the `headlamp-workspace-kubeconfig` secret aligned with
 the current set of non-terminating consumer workspaces and restarts the
 Headlamp deployment when that secret changes.
 
+For newly provisioned workspaces, each Headlamp context now uses a
+workspace-local service account token instead of the provisioner admin
+credentials. Existing workspaces keep their older admin-derived contexts until
+they are migrated.
+
 The KCP Headlamp plugin currently provides:
 
 - a Workspaces view
@@ -187,13 +196,16 @@ The typical tenant flow is:
 1. A user creates a workspace in the provisioner UI.
 2. The provisioner creates `root:consumers:<name>`.
 3. The provisioner creates `APIBinding/dbaas` in that workspace.
-4. The user downloads a kubeconfig or opens the workspace in Headlamp.
-5. The user creates a `MongoDBDatabase` object in the tenant workspace.
-6. The API Sync Agent mirrors that object into the physical cluster.
-7. kro creates either a `MongoDB` or `FlexCluster` child resource.
-8. The corresponding mock controller writes backend status.
-9. kro updates `MongoDBDatabase.status`.
-10. The API Sync Agent syncs that status back to the tenant workspace.
+4. The provisioner creates a workspace-local service account in `default`,
+   requests a long-lived token secret for it, and binds it to `cluster-admin`
+   inside that workspace only.
+5. The user downloads a kubeconfig or opens the workspace in Headlamp.
+6. The user creates a `MongoDBDatabase` object in the tenant workspace.
+7. The API Sync Agent mirrors that object into the physical cluster.
+8. kro creates either a `MongoDB` or `FlexCluster` child resource.
+9. The corresponding mock controller writes backend status.
+10. kro updates `MongoDBDatabase.status`.
+11. The API Sync Agent syncs that status back to the tenant workspace.
 
 ## Workspace Deletion Semantics
 
@@ -259,8 +271,10 @@ Key paths in the current repository:
 
 ## Known Constraints
 
-- Tenant kubeconfigs are still generated from the admin credentials for this
-  demo. That is acceptable for local development only.
+- Newly provisioned tenant kubeconfigs and Headlamp contexts now use a
+  workspace-local service account token instead of the admin credentials.
+- Existing workspaces still keep their older admin-derived credentials until
+  they are migrated.
 - The current graph status section mainly reflects the on-prem branch.
 - Headlamp workspace access is centralized through one shared deployment and a
   dynamically maintained kubeconfig secret, not through per-user identities.
