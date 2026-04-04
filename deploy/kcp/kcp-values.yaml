@@ -40,6 +40,10 @@ kcp:
   # external localhost-based kubeconfig.
   externalLogicalClusterAdminFlag: false
   extraFlags:
+    # Publish APIExport virtual workspace endpoints through the in-cluster
+    # front-proxy so in-cluster consumers like the sync-agent can authenticate
+    # against the correct hop instead of talking to the shard directly.
+    - --shard-virtual-workspace-url=https://kcp-front-proxy.kcp.svc.cluster.local:8443
     - --external-logical-cluster-admin-kubeconfig=/etc/kcp/external-logical-cluster-admin-service/kubeconfig
   extraVolumes:
     - name: external-logical-cluster-admin-service-kubeconfig
