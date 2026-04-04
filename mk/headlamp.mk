@@ -17,7 +17,7 @@ deploy-headlamp-plugin: build-headlamp-plugin ## Publish the Headlamp plugin Con
 	  --dry-run=client -o yaml | $(KUBECTL) apply -f -
 
 bootstrap-headlamp-kubeconfig: ## Refresh the shared Headlamp kubeconfig secret data
-	python3 $(SCRIPTS_DIR)/bootstrap_headlamp_kubeconfig.py
+	bash $(SCRIPTS_DIR)/bootstrap_headlamp_kubeconfig.sh
 
 deploy-headlamp: deploy-headlamp-plugin ## Install Headlamp and its KCP plugin
 	$(KUBECTL) apply -f deploy/headlamp/kubeconfig-secret.yaml
@@ -25,7 +25,7 @@ deploy-headlamp: deploy-headlamp-plugin ## Install Headlamp and its KCP plugin
 	$(HELM) upgrade --install headlamp $(HELM_HEADLAMP_CHART) \
 	  -n $(HELM_HEADLAMP_NS) --create-namespace \
 	  -f $(HELM_HEADLAMP_VALUES)
-	python3 $(SCRIPTS_DIR)/bootstrap_headlamp_kubeconfig.py
+	bash $(SCRIPTS_DIR)/bootstrap_headlamp_kubeconfig.sh
 	$(KUBECTL) -n $(HELM_HEADLAMP_NS) rollout status deployment/headlamp --timeout=120s
 	@echo "✓ Headlamp deployed → http://localhost:4466"
 
