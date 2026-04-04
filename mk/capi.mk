@@ -7,7 +7,8 @@ CAPI_CNI_LABEL_VALUE ?= calico
 
 .PHONY: check-capd-host
 check-capd-host: ## Verify the host sysctl limits required by CAPD
-	@WATCHES="$$(sysctl -n fs.inotify.max_user_watches 2>/dev/null || echo 0)"; \
+	@if [ "$$(uname -s)" != "Linux" ]; then exit 0; fi; \
+	 WATCHES="$$(sysctl -n fs.inotify.max_user_watches 2>/dev/null || echo 0)"; \
 	 INSTANCES="$$(sysctl -n fs.inotify.max_user_instances 2>/dev/null || echo 0)"; \
 	 if [ "$$WATCHES" -lt 1048576 ] || [ "$$INSTANCES" -lt 8192 ]; then \
 	   echo "CAPD requires higher host inotify limits."; \
