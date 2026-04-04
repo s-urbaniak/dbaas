@@ -16,11 +16,11 @@ spec:
     apiVersion: v1alpha1
     kind: MongoDBDatabase
     spec:
-      provider: string
-      region: string
-      version: string
-      members: integer
-      storage: string
+      provider: 'string | enum="ON-PREMISE,AWS,AZURE" | description="Backing MongoDB provider to provision for this database."'
+      region: 'string | description="Target cloud region for Atlas-backed databases."'
+      version: 'string | description="Requested MongoDB version for the provisioned database."'
+      members: 'integer | minimum=1 | description="Requested replica set member count for the database."'
+      storage: 'string | description="Requested storage tier or size for the provisioned database."'
     status:
       # NOTE: Status CEL can only reference child resource IDs (not instance.*).
       # Referencing a resource excluded by includeWhen causes a nil-ref error

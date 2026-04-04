@@ -13,7 +13,6 @@ deploy-kro: ## Install kro and the tenant ResourceGraphDefinitions
 	$(KUBECTL) apply -f config/kro/kubernetes-rgd.yaml
 	@echo "Waiting for kro to generate kubernetes.kro.run..."
 	@until $(KUBECTL) get crd kubernetes.kro.run >/dev/null 2>&1; do sleep 2; done
-	$(KUBECTL) patch crd kubernetes.kro.run --type json --patch-file deploy/kro/kubernetes-crd-patch.yaml
 	@echo "✓ kro deployed and ResourceGraphDefinitions applied"
 
 undeploy-kro: ## Remove kro and the tenant ResourceGraphDefinitions

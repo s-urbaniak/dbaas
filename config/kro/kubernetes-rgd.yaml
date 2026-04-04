@@ -10,10 +10,18 @@ spec:
   schema:
     apiVersion: v1alpha1
     kind: Kubernetes
+    types:
+      MachineCount:
+        controlPlane: 'integer | minimum=1 | description="Number of control-plane nodes to provision for the cluster."'
+        worker: 'integer | minimum=0 | description="Number of worker nodes to provision for the cluster."'
     spec:
-      machineCount:
-        controlPlane: integer
-        worker: integer
+      allowSchedulingOnControlPlanes: 'boolean | default=true | description="Allow regular pods to be scheduled onto control-plane nodes. Defaults to true."'
+      machineCount: 'MachineCount | description="Requested control-plane and worker node counts for the cluster."'
+    status:
+      URL: 'string | description="Internal mount endpoint that kcp uses to reach the provisioned cluster."'
+      mountedWorkspace: 'string | description="Name of the mounted child workspace created in the tenant workspace for this cluster."'
+      phase: 'string | description="High-level lifecycle phase reported by the kubernetes-controller."'
+      ready: 'boolean | description="Whether the provisioned CAPD cluster is ready for use and mountable."'
 
   resources:
     - id: dockerCluster

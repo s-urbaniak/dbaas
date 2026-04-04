@@ -15,6 +15,7 @@ import (
 
 	kcpapis "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 	kcpclientset "github.com/kcp-dev/sdk/client/clientset/versioned"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,6 +48,7 @@ var capiClusterGVK = schema.GroupVersionKind{
 }
 
 const kubernetesFinalizer = "dbaas.mongodb.com/kubernetes-mount"
+const controlPlaneNoScheduleTaintKey = "node-role.kubernetes.io/control-plane"
 
 type KubernetesReconciler struct {
 	client.Client
@@ -94,6 +96,9 @@ func (r *KubernetesReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	if kubeconfigReady {
 		if err := r.ensureCalicoInstalled(ctx, obj.GetNamespace(), obj.GetName()); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.reconcileControlPlaneScheduling(ctx, obj); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -221,13 +226,9 @@ func (r *KubernetesReconciler) ensureCalicoInstalled(ctx context.Context, namesp
 		return fmt.Errorf("configmap dbaas-calico is missing calico.yaml")
 	}
 
-	secret, err := r.K8sClient.CoreV1().Secrets(namespace).Get(ctx, name+"-kubeconfig", metav1.GetOptions{})
+	cfg, err := r.workloadRESTConfig(ctx, namespace, name)
 	if err != nil {
-		return fmt.Errorf("getting kubeconfig secret %s/%s-kubeconfig: %w", namespace, name, err)
-	}
-	cfg, err := clientcmd.RESTConfigFromKubeConfig(secret.Data["value"])
-	if err != nil {
-		return fmt.Errorf("building workload kubeconfig for %s/%s: %w", namespace, name, err)
+		return err
 	}
 	dyn, err := dynamic.NewForConfig(cfg)
 	if err != nil {
@@ -293,6 +294,84 @@ func (r *KubernetesReconciler) ensureCalicoInstalled(ctx context.Context, namesp
 	}
 
 	return nil
+}
+
+func (r *KubernetesReconciler) reconcileControlPlaneScheduling(ctx context.Context, obj *unstructured.Unstructured) error {
+	allowScheduling, found, err := unstructured.NestedBool(obj.Object, "spec", "allowSchedulingOnControlPlanes")
+	if err != nil {
+		return fmt.Errorf("reading spec.allowSchedulingOnControlPlanes: %w", err)
+	}
+	if !found {
+		allowScheduling = true
+	}
+
+	cfg, err := r.workloadRESTConfig(ctx, obj.GetNamespace(), obj.GetName())
+	if err != nil {
+		return err
+	}
+	workloadClient, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("building workload kubernetes client: %w", err)
+	}
+
+	nodes, err := workloadClient.CoreV1().Nodes().List(ctx, metav1.ListOptions{
+		LabelSelector: "node-role.kubernetes.io/control-plane",
+	})
+	if err != nil {
+		return fmt.Errorf("listing control-plane nodes: %w", err)
+	}
+	for _, node := range nodes.Items {
+		updated, changed := desiredControlPlaneTaints(node.Spec.Taints, allowScheduling)
+		if !changed {
+			continue
+		}
+		nodeCopy := node.DeepCopy()
+		nodeCopy.Spec.Taints = updated
+		if _, err := workloadClient.CoreV1().Nodes().Update(ctx, nodeCopy, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("updating taints for node %s: %w", node.Name, err)
+		}
+	}
+
+	return nil
+}
+
+func (r *KubernetesReconciler) workloadRESTConfig(ctx context.Context, namespace string, name string) (*rest.Config, error) {
+	secret, err := r.K8sClient.CoreV1().Secrets(namespace).Get(ctx, name+"-kubeconfig", metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("getting kubeconfig secret %s/%s-kubeconfig: %w", namespace, name, err)
+	}
+	cfg, err := clientcmd.RESTConfigFromKubeConfig(secret.Data["value"])
+	if err != nil {
+		return nil, fmt.Errorf("building workload kubeconfig for %s/%s: %w", namespace, name, err)
+	}
+	return cfg, nil
+}
+
+func desiredControlPlaneTaints(taints []corev1.Taint, allowScheduling bool) ([]corev1.Taint, bool) {
+	updated := make([]corev1.Taint, 0, len(taints)+1)
+	changed := false
+	found := false
+
+	for _, taint := range taints {
+		if taint.Key == controlPlaneNoScheduleTaintKey && taint.Effect == corev1.TaintEffectNoSchedule {
+			found = true
+			if allowScheduling {
+				changed = true
+				continue
+			}
+		}
+		updated = append(updated, taint)
+	}
+
+	if !allowScheduling && !found {
+		updated = append(updated, corev1.Taint{
+			Key:    controlPlaneNoScheduleTaintKey,
+			Effect: corev1.TaintEffectNoSchedule,
+		})
+		changed = true
+	}
+
+	return updated, changed
 }
 
 func (r *KubernetesReconciler) ensureMountedWorkspace(
