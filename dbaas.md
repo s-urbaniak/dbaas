@@ -345,8 +345,8 @@ KCP's PKI is managed by cert-manager. The important trust relationships are:
 - `kcp-ca` signs the front-proxy serving cert
 - `kcp-front-proxy-client-ca` signs the admin client certificate
 - the KCP front-proxy trusts the front-proxy client CA
-- the KCP API server is patched to trust a combined client CA so workspace
-  initialization callbacks succeed
+- the KCP workspace controller reaches the front-proxy through the in-cluster
+  Service using a dedicated external-logical-cluster-admin kubeconfig
 
 Operationally important details:
 
@@ -354,8 +354,7 @@ Operationally important details:
 - `/tmp/kcp-admin.kubeconfig` is materialized with inline cert data
 - in-cluster kubeconfigs point at
   `https://kcp-front-proxy.kcp.svc.cluster.local:8443`
-- the combined client-CA patch is required so internal KCP controllers can
-  authenticate to the API server during workspace initialization
+- host-facing kubeconfigs still point at `https://localhost:6443`
 
 ## Workspace Deletion Semantics
 
@@ -394,15 +393,15 @@ make deploy
 The deploy pipeline is:
 
 ```text
-kind -> helm-repos -> cert-manager -> kcp -> crds -> kro -> kubeconfig
+kind -> helm-repos -> cert-manager -> capi -> kcp -> crds -> kro -> kubeconfig
 -> bootstrap -> sync-agent -> provisioner -> controllers -> headlamp
 ```
 
 Important deploy details:
 
 - KCP depends on cert-manager for serving and client certificates.
-- `patch-kcp-client-ca` is required so KCP trusts the front-proxy client CA for
-  workspace initialization callbacks.
+- KCP mounts a repo-managed kubeconfig so the workspace controller reaches the
+  front-proxy via `https://kcp-front-proxy.kcp.svc.cluster.local:8443`.
 - the KCP admin kubeconfig is materialized into `/tmp/kcp-admin.kubeconfig`
   with inline cert data
 - bootstrap of `root:dbaas-provider` and `root:consumers` runs as an in-cluster

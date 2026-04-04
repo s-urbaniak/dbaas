@@ -3,7 +3,10 @@ HELM_KCP_NS := kcp
 HELM_KCP_VALUES := deploy/kcp/kcp-values.yaml
 
 .PHONY: deploy-kcp undeploy-kcp
-deploy-kcp: ## Install KCP and patch client CA handling for workspace init
+deploy-kcp: ## Install KCP with in-cluster front-proxy workspace-controller access
+	$(KUBECTL) create namespace $(HELM_KCP_NS) \
+	  --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(KUBECTL) apply -f deploy/kcp/external-admin-kubeconfig-service.yaml
 	$(HELM) upgrade --install kcp $(HELM_KCP_CHART) \
 	  -n $(HELM_KCP_NS) --create-namespace \
 	  -f $(HELM_KCP_VALUES)
@@ -11,17 +14,13 @@ deploy-kcp: ## Install KCP and patch client CA handling for workspace init
 	$(KUBECTL) -n $(HELM_KCP_NS) rollout status deployment/kcp --timeout=600s
 	$(KUBECTL) -n $(HELM_KCP_NS) rollout status deployment/kcp-front-proxy --timeout=600s
 	$(KUBECTL) apply -f deploy/kcp/admin-cert.yaml
-	$(MAKE) patch-kcp-client-ca
 	@echo "Waiting for kcp-admin-client-cert to be issued by cert-manager..."
 	@until $(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-admin-client-cert >/dev/null 2>&1; do sleep 2; done
 	@echo "✓ kcp-admin-client-cert ready"
 
-.PHONY: patch-kcp-client-ca
-patch-kcp-client-ca: ## Patch KCP to trust the front-proxy client CA for workspace init
-	bash $(SCRIPTS_DIR)/patch_kcp_client_ca.sh "$(KUBECTL)" "$(HELM_KCP_NS)"
-
 undeploy-kcp: ## Remove KCP from the local cluster
 	$(HELM) uninstall kcp -n $(HELM_KCP_NS) || true
+	$(KUBECTL) delete -f deploy/kcp/external-admin-kubeconfig-service.yaml --ignore-not-found
 
 .PHONY: get-kcp-kubeconfig
 get-kcp-kubeconfig: ## Build a self-contained KCP admin kubeconfig at KCP_KUBECONFIG

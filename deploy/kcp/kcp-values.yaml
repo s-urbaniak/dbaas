@@ -34,3 +34,18 @@ kcp:
 
   # Single replica is fine for local dev.
   replicaCount: 1
+
+  # Use a repo-managed kubeconfig that reaches the front-proxy through the
+  # in-cluster Service for workspace initialization instead of the chart's
+  # external localhost-based kubeconfig.
+  externalLogicalClusterAdminFlag: false
+  extraFlags:
+    - --external-logical-cluster-admin-kubeconfig=/etc/kcp/external-logical-cluster-admin-service/kubeconfig
+  extraVolumes:
+    - name: external-logical-cluster-admin-service-kubeconfig
+      secret:
+        secretName: kcp-external-admin-kubeconfig-service
+  extraVolumeMounts:
+    - name: external-logical-cluster-admin-service-kubeconfig
+      mountPath: /etc/kcp/external-logical-cluster-admin-service
+      readOnly: true
