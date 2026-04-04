@@ -40,6 +40,7 @@ kcp:
   # external localhost-based kubeconfig.
   externalLogicalClusterAdminFlag: false
   extraFlags:
+    - --feature-gates=WorkspaceMounts=true
     # Publish APIExport virtual workspace endpoints through the in-cluster
     # front-proxy so in-cluster consumers like the sync-agent can authenticate
     # against the correct hop instead of talking to the shard directly.

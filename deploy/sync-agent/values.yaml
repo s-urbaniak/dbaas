@@ -10,6 +10,8 @@ apiExportEndpointSliceName: mongodatabases.dbaas.mongodb.com
 # Uses the in-cluster KCP front-proxy address (not localhost:6443).
 # The front-proxy service exposes port 8443 (not 443).
 kcpKubeconfig: kcp-syncagent-kubeconfig
+agentName: api-syncagent-mongodb
+publishedResourceSelector: dbaas.mongodb.com/published-resource-group=mongodb
 
 # Single replica with leader election off is fine for local dev.
 replicas: 1

@@ -1,0 +1,13 @@
+apiVersion: syncagent.kcp.io/v1alpha1
+kind: PublishedResource
+metadata:
+  name: kubernetes
+  namespace: kcp-kubernetes
+  labels:
+    dbaas.mongodb.com/published-resource-group: kubernetes
+spec:
+  resource:
+    apiGroup: kro.run
+    kind: Kubernetes
+    versions:
+      - v1alpha1

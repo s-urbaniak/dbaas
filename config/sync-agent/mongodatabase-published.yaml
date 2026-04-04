@@ -14,6 +14,8 @@ kind: PublishedResource
 metadata:
   name: mongodatabases
   namespace: kcp
+  labels:
+    dbaas.mongodb.com/published-resource-group: mongodb
 spec:
   resource:
     # kro v0.9.0 always creates CRDs in the kro.run group regardless of the

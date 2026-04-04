@@ -1,0 +1,9 @@
+# API Sync Agent Helm values for the tenant Kubernetes API.
+apiExportEndpointSliceName: kubernetes.dbaas.mongodb.com
+kcpKubeconfig: kcp-syncagent-kubeconfig
+agentName: api-syncagent-kubernetes
+publishedResourceSelector: dbaas.mongodb.com/published-resource-group=kubernetes
+replicas: 1
+enableLeaderElection: false
+crds:
+  enabled: false

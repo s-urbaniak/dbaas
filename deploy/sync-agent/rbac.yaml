@@ -11,6 +11,12 @@ rules:
   - apiGroups: ["kro.run"]
     resources: ["mongodbdatabases/status"]
     verbs: ["get", "update", "patch"]
+  - apiGroups: ["kro.run"]
+    resources: ["kubernetes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["kro.run"]
+    resources: ["kubernetes/status"]
+    verbs: ["get", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -22,5 +28,8 @@ roleRef:
   name: api-syncagent-mongodbdatabase
 subjects:
   - kind: ServiceAccount
-    name: api-syncagent
+    name: api-syncagent-mongodb
     namespace: kcp
+  - kind: ServiceAccount
+    name: api-syncagent-kubernetes
+    namespace: kcp-kubernetes

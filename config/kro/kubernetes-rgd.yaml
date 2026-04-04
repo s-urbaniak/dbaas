@@ -1,0 +1,197 @@
+# kro ResourceGraphDefinition for Kubernetes.
+#
+# This exposes a small tenant-facing API while synthesizing the CAPD/CAPI
+# resources required to boot a local development cluster.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: kubernetes.dbaas.mongodb.com
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: Kubernetes
+    spec:
+      machineCount:
+        controlPlane: integer
+        worker: integer
+
+  resources:
+    - id: dockerCluster
+      template:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: DockerCluster
+        metadata:
+          name: ${schema.metadata.name}-docker
+          namespace: ${schema.metadata.namespace}
+          labels:
+            cluster.x-k8s.io/cluster-name: ${schema.metadata.name}
+        spec:
+          controlPlaneEndpoint:
+            port: 6443
+          loadBalancer: {}
+
+    - id: controlPlaneMachineTemplate
+      template:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: DockerMachineTemplate
+        metadata:
+          name: ${schema.metadata.name}-control-plane-template
+          namespace: ${schema.metadata.namespace}
+          labels:
+            cluster.x-k8s.io/cluster-name: ${schema.metadata.name}
+        spec:
+          template:
+            spec:
+              customImage: kindest/node:v1.32.1
+              extraMounts:
+                - hostPath: /var/run/docker.sock
+                  containerPath: /var/run/docker.sock
+
+    - id: workerMachineTemplate
+      template:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: DockerMachineTemplate
+        metadata:
+          name: ${schema.metadata.name}-worker-template
+          namespace: ${schema.metadata.namespace}
+          labels:
+            cluster.x-k8s.io/cluster-name: ${schema.metadata.name}
+        spec:
+          template:
+            spec:
+              customImage: kindest/node:v1.32.1
+              extraMounts:
+                - hostPath: /var/run/docker.sock
+                  containerPath: /var/run/docker.sock
+
+    - id: workerBootstrapTemplate
+      template:
+        apiVersion: bootstrap.cluster.x-k8s.io/v1beta2
+        kind: KubeadmConfigTemplate
+        metadata:
+          name: ${schema.metadata.name}-worker-bootstrap
+          namespace: ${schema.metadata.namespace}
+          labels:
+            cluster.x-k8s.io/cluster-name: ${schema.metadata.name}
+        spec:
+          template:
+            spec:
+              joinConfiguration:
+                nodeRegistration:
+                  kubeletExtraArgs:
+                    - name: eviction-hard
+                      value: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%
+
+    - id: controlPlane
+      template:
+        apiVersion: controlplane.cluster.x-k8s.io/v1beta2
+        kind: KubeadmControlPlane
+        metadata:
+          name: ${schema.metadata.name}-control-plane
+          namespace: ${schema.metadata.namespace}
+          labels:
+            cluster.x-k8s.io/cluster-name: ${schema.metadata.name}
+        spec:
+          version: v1.32.1
+          replicas: ${schema.spec.machineCount.controlPlane}
+          machineTemplate:
+            metadata:
+              labels:
+                cluster.x-k8s.io/cluster-name: ${schema.metadata.name}
+                cluster.x-k8s.io/control-plane: ""
+            spec:
+              infrastructureRef:
+                apiGroup: infrastructure.cluster.x-k8s.io
+                kind: DockerMachineTemplate
+                name: ${controlPlaneMachineTemplate.metadata.name}
+          rollout:
+            strategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxSurge: 1
+          kubeadmConfigSpec:
+            clusterConfiguration:
+              apiServer:
+                certSANs:
+                  - localhost
+                  - 127.0.0.1
+                  - 0.0.0.0
+                  - host.docker.internal
+            initConfiguration:
+              nodeRegistration:
+                kubeletExtraArgs:
+                  - name: eviction-hard
+                    value: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%
+            joinConfiguration:
+              nodeRegistration:
+                kubeletExtraArgs:
+                  - name: eviction-hard
+                    value: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%
+
+    - id: cluster
+      template:
+        apiVersion: cluster.x-k8s.io/v1beta2
+        kind: Cluster
+        metadata:
+          name: ${schema.metadata.name}
+          namespace: ${schema.metadata.namespace}
+          labels:
+            addons.dbaas.dev/cni: calico
+            cluster.x-k8s.io/cluster-name: ${schema.metadata.name}
+        spec:
+          clusterNetwork:
+            pods:
+              cidrBlocks:
+                - 192.168.0.0/16
+            serviceDomain: cluster.local
+            services:
+              cidrBlocks:
+                - 10.128.0.0/12
+          infrastructureRef:
+            apiGroup: infrastructure.cluster.x-k8s.io
+            kind: DockerCluster
+            name: ${dockerCluster.metadata.name}
+          controlPlaneRef:
+            apiGroup: controlplane.cluster.x-k8s.io
+            kind: KubeadmControlPlane
+            name: ${controlPlane.metadata.name}
+
+    - id: workers
+      template:
+        apiVersion: cluster.x-k8s.io/v1beta2
+        kind: MachineDeployment
+        metadata:
+          name: ${schema.metadata.name}-workers
+          namespace: ${schema.metadata.namespace}
+          labels:
+            cluster.x-k8s.io/cluster-name: ${schema.metadata.name}
+        spec:
+          clusterName: ${schema.metadata.name}
+          replicas: ${schema.spec.machineCount.worker}
+          selector:
+            matchLabels:
+              cluster.x-k8s.io/cluster-name: ${schema.metadata.name}
+              dbaas.mongodb.com/machine-deployment: workers
+          rollout:
+            strategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxSurge: 1
+                maxUnavailable: 0
+          template:
+            metadata:
+              labels:
+                cluster.x-k8s.io/cluster-name: ${schema.metadata.name}
+                dbaas.mongodb.com/machine-deployment: workers
+            spec:
+              clusterName: ${schema.metadata.name}
+              version: v1.32.1
+              bootstrap:
+                configRef:
+                  apiGroup: bootstrap.cluster.x-k8s.io
+                  kind: KubeadmConfigTemplate
+                  name: ${workerBootstrapTemplate.metadata.name}
+              infrastructureRef:
+                apiGroup: infrastructure.cluster.x-k8s.io
+                kind: DockerMachineTemplate
+                name: ${workerMachineTemplate.metadata.name}

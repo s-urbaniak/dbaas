@@ -81,7 +81,7 @@ spec:
               kubectl config set-cluster kcp \
                 --server=https://kcp-front-proxy.kcp.svc.cluster.local:8443/clusters/root:dbaas-provider
 
-              echo "Applying APIExport to root:dbaas-provider..."
+              echo "Applying APIExports to root:dbaas-provider..."
               kubectl apply --validate=false -f /scripts/apiexport.yaml
 
               echo "Bootstrap complete."

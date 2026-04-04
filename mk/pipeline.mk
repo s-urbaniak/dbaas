@@ -31,6 +31,7 @@ deploy: ## Run the full local deploy pipeline
 undeploy: undeploy-sync-agent undeploy-headlamp undeploy-kro undeploy-kcp undeploy-capi undeploy-cert-manager ## Remove the deployed local stack from the current cluster
 	$(KUBECTL) delete -f deploy/mock-mongodb/     --ignore-not-found
 	$(KUBECTL) delete -f deploy/mock-flexcluster/ --ignore-not-found
+	$(KUBECTL) delete -f deploy/kubernetes-controller/ --ignore-not-found
 	$(KUBECTL) delete -f deploy/provisioner/      --ignore-not-found
 	$(KUBECTL) delete -f config/atlas-crds/       --ignore-not-found
 	$(KUBECTL) delete -f config/mck-crds/         --ignore-not-found

@@ -62,12 +62,14 @@ func main() {
 		kubeconfigPath     string
 		providerWorkspace  string
 		exportName         string
+		kubernetesExport   string
 		consumersWorkspace string
 	)
 	flag.StringVar(&addr, "addr", ":8090", "HTTP listen address.")
 	flag.StringVar(&kubeconfigPath, "kubeconfig", os.Getenv("KUBECONFIG"), "Path to KCP admin kubeconfig.")
 	flag.StringVar(&providerWorkspace, "provider-workspace", "root:dbaas-provider", "KCP path of the service-provider workspace.")
-	flag.StringVar(&exportName, "export-name", "mongodatabases.dbaas.mongodb.com", "APIExport name to bind in consumer workspaces.")
+	flag.StringVar(&exportName, "export-name", "mongodatabases.dbaas.mongodb.com", "MongoDB APIExport name to bind in consumer workspaces.")
+	flag.StringVar(&kubernetesExport, "kubernetes-export-name", "kubernetes.dbaas.mongodb.com", "Kubernetes APIExport name to bind in consumer workspaces.")
 	flag.StringVar(&consumersWorkspace, "consumers-workspace", "root:consumers", "KCP path of the consumer org workspace.")
 	flag.Parse()
 
@@ -94,10 +96,13 @@ func main() {
 	}
 
 	prov := &provisioner.Provisioner{
-		ProcessContext:     ctx,
-		AdminConfig:        cfg,
-		ProviderWorkspace:  providerWorkspace,
-		ExportName:         exportName,
+		ProcessContext:    ctx,
+		AdminConfig:       cfg,
+		ProviderWorkspace: providerWorkspace,
+		Bindings: []provisioner.WorkspaceBinding{
+			{Name: "dbaas", ExportName: exportName},
+			{Name: "kubernetes", ExportName: kubernetesExport},
+		},
 		ConsumersWorkspace: consumersWorkspace,
 		K8sClient:          k8sClient,
 		HeadlampNamespace:  "headlamp",

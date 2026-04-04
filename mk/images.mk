@@ -4,6 +4,7 @@ ko-build: ## Build the mock controller and provisioner images with ko
 	  $(KO) build --platform=$(KO_PLATFORMS) \
 	  ./cmd/mock-mongodb/ \
 	  ./cmd/mock-flexcluster/ \
+	  ./cmd/kubernetes-controller/ \
 	  ./cmd/provisioner/
 
 ko-apply: ## Build and apply the mock controller and provisioner manifests with ko
@@ -11,6 +12,7 @@ ko-apply: ## Build and apply the mock controller and provisioner manifests with 
 	  $(KO) apply --platform=$(KO_PLATFORMS) \
 	  -f deploy/mock-mongodb/ \
 	  -f deploy/mock-flexcluster/ \
+	  -f deploy/kubernetes-controller/ \
 	  -f deploy/provisioner/
 
 .PHONY: build vet

@@ -84,8 +84,8 @@ type Provisioner struct {
 	AdminConfig *rest.Config
 	// ProviderWorkspace is the KCP path of the service-provider workspace (e.g. "root:dbaas-provider").
 	ProviderWorkspace string
-	// ExportName is the name of the APIExport to bind (e.g. "mongodatabases.dbaas.mongodb.com").
-	ExportName string
+	// Bindings lists the APIBindings that every consumer workspace should have.
+	Bindings []WorkspaceBinding
 	// ConsumersWorkspace is the KCP path of the consumer org workspace (e.g. "root:consumers").
 	ConsumersWorkspace string
 
@@ -98,6 +98,12 @@ type Provisioner struct {
 	HeadlampSecret string
 	// HeadlampDeployment is the name of the Headlamp Deployment to rolling-restart after updates.
 	HeadlampDeployment string
+}
+
+// WorkspaceBinding describes one tenant APIBinding managed by the provisioner.
+type WorkspaceBinding struct {
+	Name       string
+	ExportName string
 }
 
 // WorkspaceInfo holds display information about a consumer workspace.
@@ -200,8 +206,8 @@ func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (stri
 		return "", fmt.Errorf("creating workspace client: %w", err)
 	}
 
-	if err := p.ensureWorkspaceBinding(ctx, wsClient); err != nil {
-		return "", fmt.Errorf("creating APIBinding in workspace %q: %w", name, err)
+	if err := p.ensureWorkspaceBindings(ctx, wsClient); err != nil {
+		return "", fmt.Errorf("creating APIBindings in workspace %q: %w", name, err)
 	}
 
 	if err := p.ensureScopedWorkspaceCredentials(ctx, wsPath); err != nil {
@@ -215,17 +221,17 @@ func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (stri
 	return wsURL, nil
 }
 
-func (p *Provisioner) desiredWorkspaceBinding() *kcpapisv1alpha1.APIBinding {
+func (p *Provisioner) desiredWorkspaceBinding(binding WorkspaceBinding) *kcpapisv1alpha1.APIBinding {
 	return &kcpapisv1alpha1.APIBinding{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "apis.kcp.io/v1alpha1",
 			Kind:       "APIBinding",
 		},
-		ObjectMeta: metav1.ObjectMeta{Name: "dbaas"},
+		ObjectMeta: metav1.ObjectMeta{Name: binding.Name},
 		Spec: kcpapisv1alpha1.APIBindingSpec{
 			Reference: kcpapisv1alpha1.BindingReference{
 				Export: &kcpapisv1alpha1.ExportBindingReference{
-					Name: p.ExportName,
+					Name: binding.ExportName,
 					Path: p.ProviderWorkspace,
 				},
 			},
@@ -233,22 +239,26 @@ func (p *Provisioner) desiredWorkspaceBinding() *kcpapisv1alpha1.APIBinding {
 	}
 }
 
-func (p *Provisioner) ensureWorkspaceBinding(
+func (p *Provisioner) ensureWorkspaceBindings(
 	ctx context.Context,
 	wsClient kcpclientset.Interface,
 ) error {
-	if _, err := wsClient.ApisV1alpha1().APIBindings().Get(ctx, "dbaas", metav1.GetOptions{}); err == nil {
-		return nil
-	} else if !apierrors.IsNotFound(err) {
-		return err
-	}
+	for _, binding := range p.Bindings {
+		if _, err := wsClient.ApisV1alpha1().APIBindings().Get(ctx, binding.Name, metav1.GetOptions{}); err == nil {
+			continue
+		} else if !apierrors.IsNotFound(err) {
+			return err
+		}
 
-	_, err := wsClient.ApisV1alpha1().APIBindings().Create(
-		ctx,
-		p.desiredWorkspaceBinding(),
-		metav1.CreateOptions{},
-	)
-	return err
+		if _, err := wsClient.ApisV1alpha1().APIBindings().Create(
+			ctx,
+			p.desiredWorkspaceBinding(binding),
+			metav1.CreateOptions{},
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetWorkspaceURL returns the URL of an existing consumer workspace.
@@ -422,7 +432,7 @@ func (p *Provisioner) ReconcileHeadlamp(ctx context.Context) {
 }
 
 // ReconcileWorkspaceBindings ensures all non-terminating consumer workspaces have
-// the expected DBaaS APIBinding.
+// the expected tenant APIBindings.
 func (p *Provisioner) ReconcileWorkspaceBindings(ctx context.Context) {
 	workspaces, err := p.listConsumerWorkspaces(ctx)
 	if err != nil {
@@ -442,8 +452,8 @@ func (p *Provisioner) ReconcileWorkspaceBindings(ctx context.Context) {
 				"workspace", workspace.Name, "err", err)
 			continue
 		}
-		if err := p.ensureWorkspaceBinding(ctx, client); err != nil {
-			slog.Error("workspace binding reconcile: ensure binding",
+		if err := p.ensureWorkspaceBindings(ctx, client); err != nil {
+			slog.Error("workspace binding reconcile: ensure bindings",
 				"workspace", workspace.Name, "err", err)
 		}
 		if p.workspaceCredentialMode(workspace) != workspaceCredentialsScoped {

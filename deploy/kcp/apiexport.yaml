@@ -7,3 +7,8 @@ apiVersion: apis.kcp.io/v1alpha2
 kind: APIExport
 metadata:
   name: mongodatabases.dbaas.mongodb.com
+---
+apiVersion: apis.kcp.io/v1alpha2
+kind: APIExport
+metadata:
+  name: kubernetes.dbaas.mongodb.com
