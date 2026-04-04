@@ -46,13 +46,20 @@ KUBECTL ?= kubectl
 HELM    ?= helm
 KO      ?= ko
 KIND    ?= kind
+CLUSTERCTL ?= clusterctl
+CAPI_VERSION ?= v1.12.4
+CAPI_QUICKSTART_CLUSTER_NAME ?= capd-quickstart
+CAPI_QUICKSTART_KUBERNETES_VERSION ?= v1.32.1
+CAPI_ADDON_NAMESPACE ?= default
+CAPI_CNI_LABEL_KEY ?= addons.dbaas.dev/cni
+CAPI_CNI_LABEL_VALUE ?= calico
 
 .PHONY: all
 all: refresh-crds
 
 # ── kind cluster ──────────────────────────────────────────────────────────────
 .PHONY: kind-create kind-delete
-kind-create:
+kind-create: check-capd-host
 	$(KIND) create cluster --name $(KIND_CLUSTER_NAME) --config deploy/kind/kind-config.yaml
 	@echo "✓ kind cluster '$(KIND_CLUSTER_NAME)' created"
 	@echo "  KCP front-proxy → https://localhost:6443"
@@ -107,6 +114,77 @@ deploy-cert-manager:
 
 undeploy-cert-manager:
 	$(HELM) uninstall cert-manager -n cert-manager || true
+
+# ── Cluster API + CAPD ───────────────────────────────────────────────────────
+.PHONY: check-capd-host check-clusterctl deploy-capi undeploy-capi capd-quickstart-up capd-quickstart-down
+check-capd-host:
+	@WATCHES="$$(sysctl -n fs.inotify.max_user_watches 2>/dev/null || echo 0)"; \
+	 INSTANCES="$$(sysctl -n fs.inotify.max_user_instances 2>/dev/null || echo 0)"; \
+	 if [ "$$WATCHES" -lt 1048576 ] || [ "$$INSTANCES" -lt 8192 ]; then \
+	   echo "CAPD requires higher host inotify limits."; \
+	   echo "Current values: fs.inotify.max_user_watches=$$WATCHES fs.inotify.max_user_instances=$$INSTANCES"; \
+	   echo "Persist them across reboots with:"; \
+	   echo "  sudo tee /etc/sysctl.d/99-dbaas-capd.conf >/dev/null <<'EOF'"; \
+	   echo "  fs.inotify.max_user_watches = 1048576"; \
+	   echo "  fs.inotify.max_user_instances = 8192"; \
+	   echo "  EOF"; \
+	   echo "  sudo sysctl --system"; \
+	   exit 1; \
+	 fi
+
+check-clusterctl:
+	@command -v $(CLUSTERCTL) >/dev/null 2>&1 || { \
+	  echo "clusterctl is required but not installed."; \
+	  echo "Install Cluster API clusterctl $(CAPI_VERSION) and retry."; \
+	  exit 1; \
+	}
+	@VERSION="$$($(CLUSTERCTL) version | tr '\n' ' ')"; \
+	 echo "Using $$VERSION"; \
+	 echo "$$VERSION" | grep -Eq 'v1\.12\.' || { \
+	   echo "clusterctl v1.12.x is required."; \
+	   exit 1; \
+	 }
+
+deploy-capi: check-clusterctl check-capd-host
+	CLUSTER_TOPOLOGY=true $(CLUSTERCTL) init \
+	  --core cluster-api:$(CAPI_VERSION) \
+	  --bootstrap kubeadm:$(CAPI_VERSION) \
+	  --control-plane kubeadm:$(CAPI_VERSION) \
+	  --infrastructure docker:$(CAPI_VERSION)
+	$(KUBECTL) -n capi-system rollout status deployment/capi-controller-manager --timeout=300s
+	$(KUBECTL) -n capi-kubeadm-bootstrap-system rollout status deployment/capi-kubeadm-bootstrap-controller-manager --timeout=300s
+	$(KUBECTL) -n capi-kubeadm-control-plane-system rollout status deployment/capi-kubeadm-control-plane-controller-manager --timeout=300s
+	$(KUBECTL) -n capd-system rollout status deployment/capd-controller-manager --timeout=300s
+	@TMP_MANIFEST=$$(mktemp); \
+	 $(KUBECTL) -n $(CAPI_ADDON_NAMESPACE) create configmap dbaas-calico \
+	   --from-file=calico.yaml=deploy/capi/calico.yaml \
+	   --dry-run=client -o yaml > "$$TMP_MANIFEST"; \
+	 $(KUBECTL) replace -f "$$TMP_MANIFEST" >/dev/null 2>&1 || $(KUBECTL) create -f "$$TMP_MANIFEST"; \
+	 rm -f "$$TMP_MANIFEST"
+	$(KUBECTL) apply -f deploy/capi/clusterresourceset.yaml
+	@echo "✓ Cluster API + CAPD ready"
+
+undeploy-capi: check-clusterctl
+	$(KUBECTL) -n $(CAPI_ADDON_NAMESPACE) delete clusterresourceset dbaas-calico --ignore-not-found
+	$(KUBECTL) -n $(CAPI_ADDON_NAMESPACE) delete configmap dbaas-calico --ignore-not-found
+	$(CLUSTERCTL) delete --all --include-crd || true
+
+capd-quickstart-up: check-clusterctl check-capd-host
+	$(CLUSTERCTL) generate cluster $(CAPI_QUICKSTART_CLUSTER_NAME) \
+	  --infrastructure docker \
+	  --flavor development \
+	  --kubernetes-version $(CAPI_QUICKSTART_KUBERNETES_VERSION) \
+	  --control-plane-machine-count 1 \
+	  --worker-machine-count 1 | $(KUBECTL) apply -f -
+	$(KUBECTL) label cluster $(CAPI_QUICKSTART_CLUSTER_NAME) \
+	  $(CAPI_CNI_LABEL_KEY)=$(CAPI_CNI_LABEL_VALUE) --overwrite
+	@echo "✓ CAPD quickstart cluster applied"
+	@echo "  Inspect with: $(CLUSTERCTL) describe cluster $(CAPI_QUICKSTART_CLUSTER_NAME)"
+
+capd-quickstart-down:
+	$(KUBECTL) delete cluster $(CAPI_QUICKSTART_CLUSTER_NAME) --ignore-not-found
+	@while $(KUBECTL) get cluster $(CAPI_QUICKSTART_CLUSTER_NAME) >/dev/null 2>&1; do sleep 2; done
+	@echo "✓ CAPD quickstart cluster removed"
 
 # ── KCP ───────────────────────────────────────────────────────────────────────
 # Prerequisite when called standalone: cert-manager must already be deployed.
@@ -310,9 +388,9 @@ ko-apply:
 # Individual phase targets (deploy-phase1, deploy-phase2) are kept for manual
 # step-by-step use.
 .PHONY: deploy-phase1
-deploy-phase1: deploy-kcp apply-crds deploy-kro
+deploy-phase1: deploy-capi deploy-kcp apply-crds deploy-kro
 	@echo ""
-	@echo "  Phase 1 complete (cert-manager, KCP, CRDs, kro)."
+	@echo "  Phase 1 complete (CAPI, KCP, CRDs, kro)."
 	@echo "  Continue with: make deploy-phase2"
 
 .PHONY: deploy-phase2
@@ -327,6 +405,7 @@ deploy:
 	  --step "kind"         "$(MAKE) kind-create" \
 	  --step "helm-repos"   "$(MAKE) helm-repos" \
 	  --step "cert-manager" "$(MAKE) deploy-cert-manager" \
+	  --step "capi"         "$(MAKE) deploy-capi" \
 	  --step "kcp"          "$(MAKE) deploy-kcp" \
 	  --step "crds"         "$(MAKE) apply-crds" \
 	  --step "kro"          "$(MAKE) deploy-kro" \
@@ -338,7 +417,7 @@ deploy:
 	  --step "headlamp"    "$(MAKE) deploy-headlamp"
 
 .PHONY: undeploy
-undeploy: undeploy-sync-agent undeploy-headlamp undeploy-kro undeploy-kcp undeploy-cert-manager
+undeploy: undeploy-sync-agent undeploy-headlamp undeploy-kro undeploy-kcp undeploy-capi undeploy-cert-manager
 	$(KUBECTL) delete -f deploy/mock-mongodb/    --ignore-not-found
 	$(KUBECTL) delete -f deploy/mock-flexcluster/ --ignore-not-found
 	$(KUBECTL) delete -f deploy/provisioner/      --ignore-not-found

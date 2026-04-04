@@ -7,11 +7,13 @@ architecture and operations reference for the repository as it exists today.
 ## Overview
 
 This repository implements a local multi-tenant DBaaS demo on top of KCP,
-kro, and a Kubernetes cluster.
+kro, Cluster API, and a Kubernetes cluster.
 
 The high-level model is:
 
 - KCP provides tenant workspaces.
+- Cluster API + CAPD run in the physical cluster as local management-plane
+  infrastructure for Kubernetes workload-cluster experiments.
 - kro defines one tenant-facing API: `MongoDBDatabase`.
 - The API Sync Agent exports that API from the provider workspace and syncs
   instances between KCP and the physical cluster.
@@ -26,6 +28,12 @@ Physical Kubernetes cluster
 |
 |-- cert-manager
 |   `-- issues KCP serving and client certificates
+|
+|-- Cluster API management stack
+|   |-- cluster-api core provider
+|   |-- kubeadm bootstrap provider
+|   |-- kubeadm control-plane provider
+|   `-- CAPD (Docker infrastructure provider)
 |
 |-- KCP
 |   |-- root:dbaas-provider
@@ -220,6 +228,25 @@ The mock controllers live in:
 - `internal/controller/flexcluster_controller.go`
 
 They simulate backend behavior rather than provisioning real infrastructure.
+
+### Cluster API + CAPD
+
+The physical kind cluster also runs Cluster API provider components:
+
+- `cluster-api`
+- `kubeadm bootstrap`
+- `kubeadm control-plane`
+- `docker` infrastructure provider (CAPD)
+- a `ClusterResourceSet` that applies Calico to repo-created workload clusters
+
+This repository currently uses them only as locally bootstrapped management
+infrastructure. The main DBaaS flow does not yet create or manage workload
+clusters through CAPI, and no tenant-facing `KubernetesCluster` API is exposed
+through KCP in this phase.
+
+CAPD also requires higher host inotify limits on Linux. The repo now checks
+for the recommended values before creating the kind management cluster,
+bootstrapping CAPD, or creating a workload cluster.
 
 ### Provisioner
 

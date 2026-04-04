@@ -42,8 +42,22 @@ High-level flow:
 - [ko](https://ko.build/) to build and load Go container images
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) to interact with the
   cluster and KCP
+- [clusterctl](https://cluster-api.sigs.k8s.io/clusterctl/overview) v1.12.x
+  to bootstrap Cluster API and CAPD into the local kind cluster
 - Python >= 3.10 for the deploy UI and Headlamp kubeconfig bootstrap scripts
 - Go >= 1.22 for local builds
+
+Linux hosts using CAPD also need higher inotify limits persisted across
+reboots:
+
+```bash
+sudo tee /etc/sysctl.d/99-dbaas-capd.conf >/dev/null <<'EOF'
+fs.inotify.max_user_watches = 1048576
+fs.inotify.max_user_instances = 8192
+EOF
+
+sudo sysctl --system
+```
 
 ### Deploy everything
 
@@ -54,7 +68,7 @@ make deploy
 This runs the full pipeline:
 
 ```text
-kind -> helm-repos -> cert-manager -> kcp -> crds -> kro -> kubeconfig
+kind -> helm-repos -> cert-manager -> capi -> kcp -> crds -> kro -> kubeconfig
 -> bootstrap -> sync-agent -> provisioner -> controllers -> headlamp
 ```
 
@@ -67,6 +81,11 @@ No port-forwarding is needed. The kind cluster exposes:
 | Headlamp GUI | `http://localhost:4466` |
 
 Open `http://localhost:8090` once the pipeline completes.
+
+The same kind cluster also acts as a Cluster API management cluster. `make
+deploy` installs Cluster API core providers, the Docker infrastructure
+provider (CAPD), and a `ClusterResourceSet` that applies Calico to
+repo-created workload clusters labeled `addons.dbaas.dev/cni=calico`.
 
 To tear everything down:
 
@@ -168,6 +187,25 @@ The UI is then available at `http://localhost:8090`.
 KO_DOCKER_REPO=kind.local make ko-apply
 ```
 
+### Smoke-test CAPD
+
+Create a demo workload cluster managed by CAPD:
+
+```bash
+make capd-quickstart-up
+clusterctl describe cluster capd-quickstart
+```
+
+`make capd-quickstart-up` labels the workload cluster so the management
+cluster installs Calico automatically. The target also fails fast if the
+host inotify limits are below the required CAPD values.
+
+Delete it again:
+
+```bash
+make capd-quickstart-down
+```
+
 ## Repository Layout
 
 ```text
@@ -184,6 +222,7 @@ KO_DOCKER_REPO=kind.local make ko-apply
 │   ├── atlas-crds/
 │   └── sync-agent/
 ├── deploy/
+│   ├── capi/
 │   ├── kind/
 │   ├── kcp/
 │   ├── kro/

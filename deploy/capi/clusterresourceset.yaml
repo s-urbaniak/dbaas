@@ -1,0 +1,13 @@
+apiVersion: addons.cluster.x-k8s.io/v1beta2
+kind: ClusterResourceSet
+metadata:
+  name: dbaas-calico
+  namespace: default
+spec:
+  clusterSelector:
+    matchLabels:
+      addons.dbaas.dev/cni: calico
+  resources:
+  - kind: ConfigMap
+    name: dbaas-calico
+  strategy: Reconcile
