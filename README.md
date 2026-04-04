@@ -160,6 +160,12 @@ kubectl get mongodb,flexclusters -A
 
 ## Development
 
+List the available top-level make targets:
+
+```bash
+make help
+```
+
 ### Refresh upstream CRDs
 
 ```bash
@@ -216,6 +222,7 @@ make capd-quickstart-down
 ├── internal/
 │   ├── controller/
 │   └── provisioner/
+├── mk/
 ├── config/
 │   ├── kro/
 │   ├── mck-crds/
@@ -230,6 +237,7 @@ make capd-quickstart-down
 │   ├── mock-mongodb/
 │   ├── mock-flexcluster/
 │   └── provisioner/
+├── scripts/
 ├── headlamp-plugin/kcp/
 ├── dbaas.md
 ├── Makefile
