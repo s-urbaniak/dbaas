@@ -13,11 +13,12 @@ The high-level model is:
 
 - KCP provides tenant workspaces.
 - Cluster API + CAPD run in the physical cluster as local management-plane
-  infrastructure for Kubernetes workload-cluster experiments.
-- kro defines one tenant-facing API: `MongoDBDatabase`.
-- The API Sync Agent exports that API from the provider workspace and syncs
-  instances between KCP and the physical cluster.
-- Mock controllers reconcile the generated backend resources.
+  infrastructure for tenant workload clusters.
+- kro defines two tenant-facing APIs: `MongoDBDatabase` and `Kubernetes`.
+- Two API Sync Agent deployments export those APIs from the provider workspace
+  and sync instances between KCP and the physical cluster.
+- Mock controllers reconcile MongoDB resources, and the
+  `kubernetes-controller` reconciles tenant Kubernetes clusters and mounts.
 - A small provisioner creates consumer workspaces and maintains Headlamp
   access to them.
 
@@ -37,18 +38,24 @@ Physical Kubernetes cluster
 |
 |-- KCP
 |   |-- root:dbaas-provider
-|   |   `-- APIExport published by the API Sync Agent
+|   |   |-- APIExport/dbaas.mongodb.com
+|   |   `-- APIExport/kubernetes.dbaas.mongodb.com
 |   |
 |   `-- root:consumers
 |       `-- root:consumers:<tenant>
 |           |-- APIBinding/dbaas
-|           `-- MongoDBDatabase objects
+|           |-- APIBinding/kubernetes
+|           |-- MongoDBDatabase objects
+|           |-- Kubernetes objects
+|           `-- mounted child workspaces for provisioned tenant clusters
 |
-|-- API Sync Agent
-|   `-- syncs MongoDBDatabase instances and status between KCP and the cluster
+|-- API Sync Agents
+|   |-- api-syncagent-mongodb
+|   `-- api-syncagent-kubernetes
 |
 |-- kro
-|   `-- ResourceGraphDefinition for MongoDBDatabase
+|   |-- ResourceGraphDefinition for MongoDBDatabase
+|   `-- ResourceGraphDefinition for Kubernetes
 |
 |-- mock-mongodb controller
 |   `-- reconciles mongodb.com/v1 MongoDB
@@ -58,6 +65,10 @@ Physical Kubernetes cluster
 |
 |-- provisioner
 |   `-- creates and deletes consumer workspaces and kubeconfigs
+|
+|-- kubernetes-controller
+|   |-- manages Kubernetes status and deletion
+|   `-- exposes mounted CAPD clusters back to KCP
 |
 `-- Headlamp
     |-- one shared deployment
@@ -73,14 +84,15 @@ Physical Kubernetes cluster
 4. The provisioner creates a workspace-local service account, token secret,
    and `ClusterRoleBinding` for newly provisioned workspaces.
 5. The tenant downloads a kubeconfig or opens the workspace in Headlamp.
-6. The tenant creates a `MongoDBDatabase` object.
-7. The API Sync Agent mirrors the object into the physical cluster.
-8. kro creates either a `MongoDB` or `FlexCluster` child resource.
-9. The corresponding mock controller writes backend status.
-10. kro updates `MongoDBDatabase.status`.
+6. The tenant creates a `MongoDBDatabase` or `Kubernetes` object.
+7. The corresponding API Sync Agent mirrors the object into the physical
+   cluster.
+8. kro creates the backing resources.
+9. The corresponding controller writes backend status.
+10. kro or the `kubernetes-controller` updates the tenant-facing status.
 11. The API Sync Agent syncs that status back to the tenant workspace.
 
-## Resource Lifecycle
+## MongoDB Resource Lifecycle
 
 This section traces a single `MongoDBDatabase` through every layer of the
 system, using tenant workspace `root:consumers:test` and a database named
@@ -178,6 +190,43 @@ The current graph mainly reflects the on-prem branch in this top-level status.
 The tenant sees backend state on the original object and does not see the
 hashed physical name or the physical-cluster namespace.
 
+## Kubernetes Resource Lifecycle
+
+This section traces a tenant `Kubernetes` object through every layer of the
+system, using tenant workspace `root:consumers:test` and a cluster named
+`demo-cluster`.
+
+1. The tenant creates `kro.run/v1alpha1 Kubernetes` in `root:consumers:test`.
+2. `api-syncagent-kubernetes` mirrors it into the physical cluster using the
+   service-cluster namespace for that tenant workspace and a hashed object
+   name.
+3. kro expands `config/kro/kubernetes-rgd.yaml` into the required CAPI/CAPD
+   resources:
+   - `Cluster`
+   - `DockerCluster`
+   - `KubeadmControlPlane`
+   - `DockerMachineTemplate`
+   - `KubeadmConfigTemplate`
+   - `MachineDeployment`
+4. The generated `Cluster` is labeled for the Calico `ClusterResourceSet`, so
+   the workload cluster gets a CNI automatically.
+5. The `kubernetes-controller` watches the synced `Kubernetes` object, waits
+   for the workload cluster kubeconfig to appear, ensures Calico is installed,
+   and reconciles control-plane taints according to
+   `spec.allowSchedulingOnControlPlanes`.
+6. Once the workload cluster is ready, the controller publishes
+   `status.URL`, marks the resource ready, and creates a mounted child
+   workspace under the tenant workspace.
+7. The tenant can then enter that child workspace and use the provisioned
+   CAPD cluster through KCP workspace mounts.
+
+Deleting the tenant `Kubernetes` object triggers the reverse path:
+
+1. sync-agent starts background cleanup on the service-cluster object.
+2. the `kubernetes-controller` finalizer deletes the mounted child workspace.
+3. once the finalizer is removed, KRO deletes the generated CAPI objects.
+4. CAPI and CAPD tear down the Docker-backed workload cluster.
+
 ## Major Components
 
 ### KCP
@@ -187,38 +236,53 @@ KCP hosts two important root-level workspaces:
 - `root:dbaas-provider`
 - `root:consumers`
 
-`root:dbaas-provider` is the service-provider workspace. The API Sync Agent
-publishes the `MongoDBDatabase` API from there.
+`root:dbaas-provider` is the service-provider workspace. The API Sync Agents
+publish the `MongoDBDatabase` and `Kubernetes` APIs from there.
 
 `root:consumers` is the parent for tenant workspaces. The provisioner creates
-child workspaces under it and adds the `dbaas` APIBinding inside each one.
+child workspaces under it and adds the `dbaas` and `kubernetes` APIBindings
+inside each one.
 
 ### kro
 
-kro owns the `ResourceGraphDefinition` in
-`config/kro/mongodatabase-rgd.yaml`.
+kro owns the `ResourceGraphDefinition`s in:
 
-Today the generated API is:
+- `config/kro/mongodatabase-rgd.yaml`
+- `config/kro/kubernetes-rgd.yaml`
 
-- group `kro.run`
-- version `v1alpha1`
-- kind `MongoDBDatabase`
-- resource `mongodbdatabases`
+Today the generated tenant APIs are:
 
-The graph branches on `spec.provider` and currently exposes richer top-level
-status for the on-prem path than for the Atlas path.
+- `kro.run/v1alpha1 MongoDBDatabase`
+- `kro.run/v1alpha1 Kubernetes`
+
+The MongoDB graph branches on `spec.provider` and currently exposes richer
+top-level status for the on-prem path than for the Atlas path.
+
+The Kubernetes graph exposes:
+
+- `spec.machineCount.controlPlane`
+- `spec.machineCount.worker`
+- `spec.allowSchedulingOnControlPlanes`
+
+and synthesizes the required CAPD-backed CAPI resources for a tenant cluster.
 
 ### API Sync Agent
 
-The API Sync Agent exports the generated `MongoDBDatabase` API from
-`root:dbaas-provider` and synchronizes instances and status between KCP and the
-physical cluster.
+The API Sync Agent runs as two deployments:
+
+- `api-syncagent-mongodb`
+- `api-syncagent-kubernetes`
+
+Together they export the generated `MongoDBDatabase` and `Kubernetes` APIs
+from `root:dbaas-provider` and synchronize instances and status between KCP
+and the physical cluster.
 
 Deploy order matters here:
 
 - MCK and Atlas CRDs must exist before kro applies the graph.
-- kro must apply the graph before the sync agent starts.
-- the sync agent must see `mongodbdatabases.kro.run` at startup.
+- kro must apply the graphs before the sync agents start.
+- the sync agents must see `mongodbdatabases.kro.run` and
+  `kubernetes.kro.run` at startup.
 
 ### Mock controllers
 
@@ -239,14 +303,30 @@ The physical kind cluster also runs Cluster API provider components:
 - `docker` infrastructure provider (CAPD)
 - a `ClusterResourceSet` that applies Calico to repo-created workload clusters
 
-This repository currently uses them only as locally bootstrapped management
-infrastructure. The main DBaaS flow does not yet create or manage workload
-clusters through CAPI, and no tenant-facing `KubernetesCluster` API is exposed
-through KCP in this phase.
+This repository now uses them for both:
+
+- the local management cluster bootstrap
+- tenant-facing `Kubernetes` resources provisioned through KCP
 
 CAPD also requires higher host inotify limits on Linux. The repo now checks
 for the recommended values before creating the kind management cluster,
 bootstrapping CAPD, or creating a workload cluster.
+
+### Kubernetes Controller
+
+The Kubernetes controller lives in:
+
+- `cmd/kubernetes-controller`
+- `internal/controller/kubernetes_controller.go`
+
+It is responsible for:
+
+- reflecting workload-cluster readiness into `Kubernetes.status`
+- ensuring Calico is installed in the workload cluster
+- reconciling whether control-plane nodes keep or drop the standard
+  `NoSchedule` taint
+- creating and deleting the mounted child workspaces
+- serving the reverse-proxy endpoint that kcp workspace mounts target
 
 ### Provisioner
 
@@ -274,7 +354,7 @@ Provisioner responsibilities:
 
 - create a consumer workspace under `root:consumers`
 - wait for the workspace to become ready and expose `Spec.URL`
-- create the `dbaas` APIBinding in that workspace
+- create the `dbaas` and `kubernetes` APIBindings in that workspace
 - create a workspace-local service account, token secret, and
   `ClusterRoleBinding` for new workspaces
 - generate tenant kubeconfigs
@@ -364,7 +444,7 @@ parent `Workspace` object in `root:consumers`.
 KCP then deletes:
 
 - the `APIBinding` inside the workspace
-- the `MongoDBDatabase` objects inside the workspace
+- the `MongoDBDatabase` and `Kubernetes` objects inside the workspace
 - the child `LogicalCluster`
 
 The parent `Workspace` object can remain visible briefly after the child
@@ -377,10 +457,10 @@ useful status from the child `LogicalCluster`:
 That reflects real deletion progress more accurately than the raw workspace
 phase alone.
 
-Production caveat:
-- if a real controller provisions cloud infrastructure, object deletion needs a
-  finalizer-driven cleanup path before workspace teardown completes
-- otherwise a workspace delete could orphan external resources
+Implementation note:
+- tenant `Kubernetes` objects already use a finalizer-driven cleanup path via
+  the `kubernetes-controller` before the mounted child workspace and CAPD
+  cluster disappear
 
 ## Deploy Flow
 
@@ -418,6 +498,8 @@ Important deploy details:
   they are migrated.
 - The generated tenant CRD is in the `kro.run` API group, not
   `dbaas.mongodb.com`.
+- KRO 0.9.1 currently does not surface RGD field descriptions in generated
+  CRDs, so `kubectl explain` still lacks those doc strings.
 - The current graph status section mainly reflects the on-prem branch.
 - Headlamp workspace access is centralized through one shared deployment and a
   dynamically maintained kubeconfig secret, not through per-user identities.
@@ -428,6 +510,8 @@ Key paths in the current repository:
 
 - [Makefile](Makefile)
 - `config/kro/mongodatabase-rgd.yaml`
+- `config/kro/kubernetes-rgd.yaml`
+- `internal/controller/kubernetes_controller.go`
 - [main.go](cmd/provisioner/main.go)
 - [index.html](cmd/provisioner/static/index.html)
 - [workspace.go](internal/provisioner/workspace.go)

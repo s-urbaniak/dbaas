@@ -1,15 +1,23 @@
 # DBaaS - Database as a Service PoC
 
-A proof-of-concept multi-tenant Database-as-a-Service built on
-[KCP](https://kcp.io), [kro](https://kro.run), and MongoDB's Kubernetes
-operators.
+A proof-of-concept multi-tenant DBaaS and Kubernetes playground built on
+[KCP](https://kcp.io), [kro](https://kro.run), Cluster API, and MongoDB's
+Kubernetes operators.
 
-Consumers interact with a single `MongoDBDatabase` API. The platform routes
-each request to either an on-prem MongoDB cluster via
+Consumers currently interact with two tenant-facing APIs:
+
+- `kro.run/v1alpha1 MongoDBDatabase`
+- `kro.run/v1alpha1 Kubernetes`
+
+`MongoDBDatabase` routes each request to either an on-prem MongoDB cluster via
 [MCK](https://github.com/mongodb/mongodb-kubernetes) or an Atlas
 `FlexCluster` via the [Atlas Kubernetes
 Operator](https://github.com/mongodb/mongodb-atlas-kubernetes),
 depending on `spec.provider`.
+
+`Kubernetes` provisions a CAPD-backed workload cluster and mounts it back into
+the tenant workspace as a child workspace so the tenant can `kubectl` into it
+through KCP.
 
 For the full architecture, authentication model, deploy internals, and
 resource lifecycle, see [dbaas.md](dbaas.md).
@@ -17,19 +25,21 @@ resource lifecycle, see [dbaas.md](dbaas.md).
 ## What This Demo Does
 
 - provisions tenant workspaces under `root:consumers`
-- exposes one tenant-facing API: `kro.run/v1alpha1 MongoDBDatabase`
+- exposes two tenant-facing APIs: `kro.run/v1alpha1 MongoDBDatabase` and
+  `kro.run/v1alpha1 Kubernetes`
 - syncs tenant objects into the physical cluster through the API Sync Agent
-- lets kro create backend child resources based on `spec.provider`
+- lets kro create backend child resources based on the tenant spec
 - exposes tenant workspaces in a small provisioner UI and in Headlamp
 
 High-level flow:
 
 1. A tenant creates a workspace in the provisioner UI.
 2. The tenant downloads a kubeconfig or opens the workspace in Headlamp.
-3. The tenant creates a `MongoDBDatabase`.
+3. The tenant creates a `MongoDBDatabase` or `Kubernetes` resource.
 4. The API Sync Agent mirrors it into the physical cluster.
-5. kro creates either a `MongoDB` or `FlexCluster` child resource.
-6. Mock controllers write backend status and the result syncs back to KCP.
+5. kro creates the backing resources.
+6. Mock controllers or the `kubernetes-controller` write backend status and
+   the result syncs back to KCP.
 
 ## Quick Start
 
@@ -44,7 +54,7 @@ High-level flow:
   cluster and KCP
 - [clusterctl](https://cluster-api.sigs.k8s.io/clusterctl/overview) v1.12.x
   to bootstrap Cluster API and CAPD into the local kind cluster
-- Python >= 3.10 for the deploy UI and Headlamp kubeconfig bootstrap scripts
+- Python >= 3.10 for the staged `make deploy` helper script
 - Go >= 1.22 for local builds
 
 Linux hosts using CAPD also need higher inotify limits persisted across
@@ -106,7 +116,8 @@ make kind-delete
 
 For newly provisioned workspaces, the provisioner creates a workspace-local
 service account, token secret, and `ClusterRoleBinding`, and builds the
-downloaded kubeconfig and Headlamp context from that token.
+downloaded kubeconfig and Headlamp context from that token. It also reconciles
+both the `dbaas` and `kubernetes` APIBindings in consumer workspaces.
 
 ### Create a database
 
@@ -157,6 +168,40 @@ For physical-cluster objects:
 unset KUBECONFIG
 kubectl get mongodb,flexclusters -A
 ```
+
+### Create a tenant Kubernetes cluster
+
+```bash
+export KUBECONFIG=/path/to/tenant-a.kubeconfig
+
+kubectl apply -f - <<'EOF'
+apiVersion: kro.run/v1alpha1
+kind: Kubernetes
+metadata:
+  name: demo-cluster
+  namespace: default
+spec:
+  machineCount:
+    controlPlane: 1
+    worker: 1
+EOF
+```
+
+Optional field:
+
+- `spec.allowSchedulingOnControlPlanes` defaults to `true`
+
+Inspect it:
+
+```bash
+kubectl get kubernetes
+kubectl get kubernetes demo-cluster -o yaml
+```
+
+Once the resource reaches `status.phase=Ready`, the provisioned cluster is
+mounted back into the tenant workspace as a child workspace with the same name.
+From the tenant workspace, switch to that child workspace and use it like a
+normal Kubernetes cluster.
 
 ## Development
 
@@ -218,6 +263,7 @@ make capd-quickstart-down
 ├── cmd/
 │   ├── mock-mongodb/
 │   ├── mock-flexcluster/
+│   ├── kubernetes-controller/
 │   └── provisioner/
 ├── internal/
 │   ├── controller/
@@ -254,6 +300,8 @@ Current known limitations:
 
 - kro generates the tenant CRD in the `kro.run` API group, not
   `dbaas.mongodb.com`
+- KRO 0.9.1 currently drops RGD field descriptions from generated CRDs, so
+  `kubectl explain` does not yet show the doc strings declared in the RGDs
 - the current graph status mainly reflects the on-prem branch
 - Headlamp still uses one shared deployment with provisioner-managed contexts,
   not per-user login
