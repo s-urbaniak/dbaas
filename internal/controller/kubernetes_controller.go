@@ -307,7 +307,7 @@ func (r *KubernetesReconciler) ensureMountedWorkspace(
 		return err
 	}
 	if tenantWorkspacePath == "" {
-		return nil
+		return fmt.Errorf("no tenant workspace found for logical cluster %q", clusterID)
 	}
 
 	clientset, err := r.kcpClientForWorkspace(tenantWorkspacePath)
@@ -382,7 +382,7 @@ func (r *KubernetesReconciler) consumerWorkspacePathForCluster(ctx context.Conte
 		return "", fmt.Errorf("listing consumer workspaces: %w", err)
 	}
 	for _, workspace := range workspaces.Items {
-		if workspace.Spec.Cluster == clusterID {
+		if workspace.Spec.Cluster == clusterID || workspace.Annotations["internal.tenancy.kcp.io/cluster"] == clusterID {
 			return r.ConsumersWorkspace + ":" + workspace.Name, nil
 		}
 	}
