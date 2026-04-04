@@ -6,17 +6,17 @@ architecture and operations reference for the repository as it exists today.
 
 ## Overview
 
-This repository implements a local multi-tenant DBaaS demo on top of KCP,
+This repository implements a local multi-tenant DBaaS demo on top of kcp,
 kro, Cluster API, and a Kubernetes cluster.
 
 The high-level model is:
 
-- KCP provides tenant workspaces.
+- kcp provides tenant workspaces.
 - Cluster API + CAPD run in the physical cluster as local management-plane
   infrastructure for tenant workload clusters.
 - kro defines two tenant-facing APIs: `MongoDBDatabase` and `Kubernetes`.
 - Two API Sync Agent deployments export those APIs from the provider workspace
-  and sync instances between KCP and the physical cluster.
+  and sync instances between kcp and the physical cluster.
 - Mock controllers reconcile MongoDB resources, and the
   `kubernetes-controller` reconciles tenant Kubernetes clusters and mounts.
 - A small provisioner creates consumer workspaces and maintains Headlamp
@@ -28,7 +28,7 @@ The high-level model is:
 Physical Kubernetes cluster
 |
 |-- cert-manager
-|   `-- issues KCP serving and client certificates
+|   `-- issues kcp serving and client certificates
 |
 |-- Cluster API management stack
 |   |-- cluster-api core provider
@@ -36,7 +36,7 @@ Physical Kubernetes cluster
 |   |-- kubeadm control-plane provider
 |   `-- CAPD (Docker infrastructure provider)
 |
-|-- KCP
+|-- kcp
 |   |-- root:dbaas-provider
 |   |   |-- APIExport/dbaas.mongodb.com
 |   |   `-- APIExport/kubernetes.dbaas.mongodb.com
@@ -68,12 +68,12 @@ Physical Kubernetes cluster
 |
 |-- kubernetes-controller
 |   |-- manages Kubernetes status and deletion
-|   `-- exposes mounted CAPD clusters back to KCP
+|   `-- exposes mounted CAPD clusters back to kcp
 |
 `-- Headlamp
     |-- one shared deployment
     |-- workspace kubeconfig maintained by the provisioner
-    `-- KCP plugin for Workspaces and API Bindings, including Instances view
+    `-- kcp plugin for Workspaces and API Bindings, including Instances view
 ```
 
 ## End-to-End Flow
@@ -99,7 +99,7 @@ system, using tenant workspace `root:consumers:test` and a database named
 `my-onprem-db` with `provider: ON-PREMISE`.
 
 ```text
-  KCP (virtual clusters)                    Physical Kubernetes cluster
+  kcp (virtual clusters)                    Physical Kubernetes cluster
   ======================                    ===========================
 
   root:consumers:test
@@ -127,26 +127,26 @@ system, using tenant workspace `root:consumers:test` and a database named
                                                +---------------------------+
 ```
 
-### 1. Tenant creates MongoDBDatabase in KCP
+### 1. Tenant creates MongoDBDatabase in kcp
 
-The tenant's kubeconfig points at the KCP front-proxy. From the tenant's
+The tenant's kubeconfig points at the kcp front-proxy. From the tenant's
 perspective this is a normal `kubectl apply`.
 
 For newly provisioned workspaces, that kubeconfig is generated from a
-workspace-local service account token rather than the KCP admin credentials.
+workspace-local service account token rather than the kcp admin credentials.
 
 ### 2. API Sync Agent syncs the object to the physical cluster
 
-The sync agent watches KCP workspaces that have bound the exported API and
+The sync agent watches kcp workspaces that have bound the exported API and
 creates a mirror on the physical cluster with a transformed identity.
 
-| Field | KCP tenant view | Physical cluster |
+| Field | kcp tenant view | Physical cluster |
 |---|---|---|
 | namespace | `default` | internal workspace cluster ID |
 | name | `my-onprem-db` | deterministic hash |
 
 Why the namespace changes:
-- the sync agent creates one namespace per KCP workspace on the physical
+- the sync agent creates one namespace per kcp workspace on the physical
   cluster
 - that keeps tenant objects isolated without pre-provisioning namespaces
 
@@ -218,7 +218,7 @@ system, using tenant workspace `root:consumers:test` and a cluster named
    `status.URL`, marks the resource ready, and creates a mounted child
    workspace under the tenant workspace.
 7. The tenant can then enter that child workspace and use the provisioned
-   CAPD cluster through KCP workspace mounts.
+   CAPD cluster through kcp workspace mounts.
 
 Deleting the tenant `Kubernetes` object triggers the reverse path:
 
@@ -229,9 +229,9 @@ Deleting the tenant `Kubernetes` object triggers the reverse path:
 
 ## Major Components
 
-### KCP
+### kcp
 
-KCP hosts two important root-level workspaces:
+kcp hosts two important root-level workspaces:
 
 - `root:dbaas-provider`
 - `root:consumers`
@@ -274,7 +274,7 @@ The API Sync Agent runs as two deployments:
 - `api-syncagent-kubernetes`
 
 Together they export the generated `MongoDBDatabase` and `Kubernetes` APIs
-from `root:dbaas-provider` and synchronize instances and status between KCP
+from `root:dbaas-provider` and synchronize instances and status between kcp
 and the physical cluster.
 
 Deploy order matters here:
@@ -306,7 +306,7 @@ The physical kind cluster also runs Cluster API provider components:
 This repository now uses them for both:
 
 - the local management cluster bootstrap
-- tenant-facing `Kubernetes` resources provisioned through KCP
+- tenant-facing `Kubernetes` resources provisioned through kcp
 
 CAPD also requires higher host inotify limits on Linux. The repo now checks
 for the recommended values before creating the kind management cluster,
@@ -334,7 +334,7 @@ The provisioner is a small Go HTTP server in
 [main.go](cmd/provisioner/main.go) backed by workspace logic in
 [workspace.go](internal/provisioner/workspace.go).
 
-It uses the published KCP SDK clientset directly for KCP-native resources:
+It uses the published kcp SDK clientset directly for kcp-native resources:
 
 - `tenancy.kcp.io/v1alpha1 Workspace`
 - `apis.kcp.io/v1alpha1 APIBinding`
@@ -384,7 +384,7 @@ workspace-local service account token instead of the provisioner admin
 credentials. Existing workspaces keep their older admin-derived contexts until
 they are migrated.
 
-The KCP Headlamp plugin currently provides:
+The kcp Headlamp plugin currently provides:
 
 - a Workspaces view
 - an API Bindings view
@@ -396,7 +396,7 @@ The KCP Headlamp plugin currently provides:
 There are three credential classes in the current system.
 
 Cluster-side components:
-- the provisioner and sync agent use KCP admin-style kubeconfigs against the
+- the provisioner and sync agent use kcp admin-style kubeconfigs against the
   in-cluster front-proxy endpoint
 - these kubeconfigs are required for cluster bootstrap and reconciliation
 
@@ -415,17 +415,17 @@ Practical limitation:
 - the workspace-local service-account kubeconfig is intended for the normal
   tenant flow
 - it removes the admin certificate from new tenant credentials
-- it should not be treated as a hard per-URL identity binding across all KCP
+- it should not be treated as a hard per-URL identity binding across all kcp
   paths
 
 ## TLS Trust Relationships
 
-KCP's PKI is managed by cert-manager. The important trust relationships are:
+kcp's PKI is managed by cert-manager. The important trust relationships are:
 
 - `kcp-ca` signs the front-proxy serving cert
 - `kcp-front-proxy-client-ca` signs the admin client certificate
-- the KCP front-proxy trusts the front-proxy client CA
-- the KCP workspace controller reaches the front-proxy through the in-cluster
+- the kcp front-proxy trusts the front-proxy client CA
+- the kcp workspace controller reaches the front-proxy through the in-cluster
   Service using a dedicated external-logical-cluster-admin kubeconfig
 
 Operationally important details:
@@ -441,7 +441,7 @@ Operationally important details:
 Deleting a tenant workspace from the provisioner sends a delete request for the
 parent `Workspace` object in `root:consumers`.
 
-KCP then deletes:
+kcp then deletes:
 
 - the `APIBinding` inside the workspace
 - the `MongoDBDatabase` and `Kubernetes` objects inside the workspace
@@ -479,10 +479,10 @@ kind -> helm-repos -> cert-manager -> capi -> kcp -> crds -> kro -> kubeconfig
 
 Important deploy details:
 
-- KCP depends on cert-manager for serving and client certificates.
-- KCP mounts a repo-managed kubeconfig so the workspace controller reaches the
+- kcp depends on cert-manager for serving and client certificates.
+- kcp mounts a repo-managed kubeconfig so the workspace controller reaches the
   front-proxy via `https://kcp-front-proxy.kcp.svc.cluster.local:8443`.
-- the KCP admin kubeconfig is materialized into `/tmp/kcp-admin.kubeconfig`
+- the kcp admin kubeconfig is materialized into `/tmp/kcp-admin.kubeconfig`
   with inline cert data
 - bootstrap of `root:dbaas-provider` and `root:consumers` runs as an in-cluster
   Job

@@ -1,7 +1,7 @@
 # DBaaS - Database as a Service PoC
 
 A proof-of-concept multi-tenant DBaaS and Kubernetes playground built on
-[KCP](https://kcp.io), [kro](https://kro.run), Cluster API, and MongoDB's
+[kcp](https://kcp.io), [kro](https://kro.run), Cluster API, and MongoDB's
 Kubernetes operators.
 
 Consumers currently interact with two tenant-facing APIs:
@@ -17,7 +17,7 @@ depending on `spec.provider`.
 
 `Kubernetes` provisions a CAPD-backed workload cluster and mounts it back into
 the tenant workspace as a child workspace so the tenant can `kubectl` into it
-through KCP.
+through kcp.
 
 For the full architecture, authentication model, deploy internals, and
 resource lifecycle, see [dbaas.md](dbaas.md).
@@ -39,7 +39,7 @@ High-level flow:
 4. The API Sync Agent mirrors it into the physical cluster.
 5. kro creates the backing resources.
 6. Mock controllers or the `kubernetes-controller` write backend status and
-   the result syncs back to KCP.
+   the result syncs back to kcp.
 
 ## Quick Start
 
@@ -47,11 +47,11 @@ High-level flow:
 
 - [kind](https://kind.sigs.k8s.io/) or minikube for the local Kubernetes
   cluster
-- [helm](https://helm.sh/) >= 3.14 to install cert-manager, KCP, kro, and the
+- [helm](https://helm.sh/) >= 3.14 to install cert-manager, kcp, kro, and the
   API Sync Agent
 - [ko](https://ko.build/) to build and load Go container images
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) to interact with the
-  cluster and KCP
+  cluster and kcp
 - [clusterctl](https://cluster-api.sigs.k8s.io/clusterctl/overview) v1.12.x
   to bootstrap Cluster API and CAPD into the local kind cluster
 - Python >= 3.10 for the staged `make deploy` helper script
@@ -86,7 +86,7 @@ No port-forwarding is needed. The kind cluster exposes:
 
 | Service | Host URL |
 |---|---|
-| KCP front-proxy | `https://localhost:6443` |
+| kcp front-proxy | `https://localhost:6443` |
 | Provisioner UI | `http://localhost:8090` |
 | Headlamp GUI | `http://localhost:4466` |
 

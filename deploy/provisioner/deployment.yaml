@@ -5,7 +5,7 @@ metadata:
   namespace: default
 ---
 # The provisioner reads workspaces in root:consumers and creates child workspaces + APIBindings.
-# It needs no permissions in the physical cluster; it talks to KCP via the mounted kubeconfig.
+# It needs no permissions in the physical cluster; it talks to kcp via the mounted kubeconfig.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -44,7 +44,7 @@ spec:
       volumes:
         - name: kcp-kubeconfig
           secret:
-            # Create this secret after KCP is installed:
+            # Create this secret after kcp is installed:
             # kubectl create secret generic kcp-admin-kubeconfig \
             #   --from-file=kubeconfig=<path-to-kcp-admin.kubeconfig>
             secretName: kcp-admin-kubeconfig

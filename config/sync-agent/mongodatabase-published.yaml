@@ -1,8 +1,8 @@
-# PublishedResource tells the KCP API Sync Agent to:
+# PublishedResource tells the kcp API Sync Agent to:
 # 1. Expose the MongoDBDatabase CRD as an APIExport in the root:dbaas-provider workspace.
-# 2. Sync MongoDBDatabase instances created in KCP workspaces down to the
+# 2. Sync MongoDBDatabase instances created in kcp workspaces down to the
 #    physical cluster where kro and the mock controllers run.
-# 3. Propagate status changes back up to the KCP workspace.
+# 3. Propagate status changes back up to the kcp workspace.
 #
 # Field names match syncagent.kcp.io/v1alpha1 schema:
 #   spec.resource.apiGroup + kind  (not group/resource)

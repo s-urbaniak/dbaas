@@ -2,7 +2,7 @@
 kind-create: check-capd-host ## Create the local kind management cluster
 	$(KIND) create cluster --name $(KIND_CLUSTER_NAME) --config deploy/kind/kind-config.yaml
 	@echo "✓ kind cluster '$(KIND_CLUSTER_NAME)' created"
-	@echo "  KCP front-proxy → https://localhost:6443"
+	@echo "  kcp front-proxy → https://localhost:6443"
 	@echo "  DBaaS provisioner UI → http://localhost:8090"
 
 kind-delete: ## Delete the local kind management cluster

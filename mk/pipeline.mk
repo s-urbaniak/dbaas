@@ -1,7 +1,7 @@
 .PHONY: deploy-phase1
 deploy-phase1: deploy-capi deploy-kcp apply-crds deploy-kro ## Run the first half of the local deploy
 	@echo ""
-	@echo "  Phase 1 complete (CAPI, KCP, CRDs, kro)."
+	@echo "  Phase 1 complete (CAPI, kcp, CRDs, kro)."
 	@echo "  Continue with: make deploy-phase2"
 
 .PHONY: deploy-phase2

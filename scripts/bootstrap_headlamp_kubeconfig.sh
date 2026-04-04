@@ -41,7 +41,7 @@ kcp_ca_b64=$(kconf "${kcp_kc}" view --raw -o jsonpath='{.clusters[0].cluster.cer
 kcp_cert_b64=$(kconf "${kcp_kc}" view --raw -o jsonpath='{.users[0].user.client-certificate-data}')
 kcp_key_b64=$(kconf "${kcp_kc}" view --raw -o jsonpath='{.users[0].user.client-key-data}')
 kcp_insecure=$(kconf "${kcp_kc}" view --raw -o jsonpath='{.clusters[0].cluster.insecure-skip-tls-verify}')
-echo "  KCP root server: ${kcp_server}"
+echo "  kcp root server: ${kcp_server}"
 
 echo "Fetching kind cluster CA ..."
 kubectl_wrap get cm kube-root-ca.crt -n kube-system -o jsonpath='{.data.ca\.crt}' > "${kind_ca_file}"

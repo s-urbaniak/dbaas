@@ -472,7 +472,7 @@ func (r *KubernetesReconciler) kcpClientForWorkspace(workspacePath string) (kcpc
 	cfg := rest.CopyConfig(r.KCPConfig)
 	baseURL, err := url.Parse(cfg.Host)
 	if err != nil {
-		return nil, fmt.Errorf("parsing KCP host %q: %w", cfg.Host, err)
+		return nil, fmt.Errorf("parsing kcp host %q: %w", cfg.Host, err)
 	}
 	baseURL.Path = ""
 	baseURL.RawQuery = ""

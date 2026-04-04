@@ -1,5 +1,5 @@
 # Empty APIExport in root:dbaas-provider.
-# Must be created before the sync agent starts: KCP creates an APIExportEndpointSlice
+# Must be created before the sync agent starts: kcp creates an APIExportEndpointSlice
 # with the same name once this APIExport exists, and the sync agent needs that
 # APIExportEndpointSlice to resolve its --apiexportendpointslice-ref at startup.
 # The sync agent will populate this export with schemas via its PublishedResource.

@@ -1,4 +1,4 @@
-# Bootstrap workspaces applied against the KCP root workspace (KUBECONFIG=kcp-admin).
+# Bootstrap workspaces applied against the kcp root workspace (KUBECONFIG=kcp-admin).
 #
 # root:dbaas-provider  — service-provider workspace; the API Sync Agent will create
 #                        the APIExport here via its PublishedResource.

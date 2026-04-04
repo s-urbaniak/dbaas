@@ -66,11 +66,11 @@ func main() {
 		consumersWorkspace string
 	)
 	flag.StringVar(&addr, "addr", ":8090", "HTTP listen address.")
-	flag.StringVar(&kubeconfigPath, "kubeconfig", os.Getenv("KUBECONFIG"), "Path to KCP admin kubeconfig.")
-	flag.StringVar(&providerWorkspace, "provider-workspace", "root:dbaas-provider", "KCP path of the service-provider workspace.")
+	flag.StringVar(&kubeconfigPath, "kubeconfig", os.Getenv("KUBECONFIG"), "Path to kcp admin kubeconfig.")
+	flag.StringVar(&providerWorkspace, "provider-workspace", "root:dbaas-provider", "kcp path of the service-provider workspace.")
 	flag.StringVar(&exportName, "export-name", "mongodatabases.dbaas.mongodb.com", "MongoDB APIExport name to bind in consumer workspaces.")
 	flag.StringVar(&kubernetesExport, "kubernetes-export-name", "kubernetes.dbaas.mongodb.com", "Kubernetes APIExport name to bind in consumer workspaces.")
-	flag.StringVar(&consumersWorkspace, "consumers-workspace", "root:consumers", "KCP path of the consumer org workspace.")
+	flag.StringVar(&consumersWorkspace, "consumers-workspace", "root:consumers", "kcp path of the consumer org workspace.")
 	flag.Parse()
 
 	if kubeconfigPath == "" {

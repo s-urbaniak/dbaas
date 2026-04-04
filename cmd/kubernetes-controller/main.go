@@ -30,8 +30,8 @@ func main() {
 	)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8081", "Metrics endpoint address.")
 	flag.StringVar(&proxyAddr, "proxy-bind-address", ":8080", "Mounted workspace proxy listen address.")
-	flag.StringVar(&kcpKubeconfig, "kcp-kubeconfig", "/etc/kcp/kubeconfig", "Path to the KCP admin kubeconfig.")
-	flag.StringVar(&consumersWorkspace, "consumers-workspace", "root:consumers", "KCP path of the consumer org workspace.")
+	flag.StringVar(&kcpKubeconfig, "kcp-kubeconfig", "/etc/kcp/kubeconfig", "Path to the kcp admin kubeconfig.")
+	flag.StringVar(&consumersWorkspace, "consumers-workspace", "root:consumers", "kcp path of the consumer org workspace.")
 	flag.StringVar(&proxyBaseURL, "proxy-base-url", "http://kubernetes-controller.default.svc.cluster.local:8080", "Base URL published into mounted workspace status.")
 	flag.BoolVar(&enableLeaderElect, "leader-elect", false, "Enable leader election for controller manager.")
 	opts := zap.Options{Development: true}
@@ -42,7 +42,7 @@ func main() {
 
 	kcpConfig, err := clientcmd.BuildConfigFromFlags("", kcpKubeconfig)
 	if err != nil {
-		ctrl.Log.Error(err, "unable to load KCP kubeconfig")
+		ctrl.Log.Error(err, "unable to load kcp kubeconfig")
 		os.Exit(1)
 	}
 	k8sConfig := ctrl.GetConfigOrDie()

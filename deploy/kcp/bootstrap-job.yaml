@@ -1,6 +1,6 @@
-# Kubernetes Job that bootstraps KCP workspaces from inside the cluster.
+# Kubernetes Job that bootstraps kcp workspaces from inside the cluster.
 #
-# Eliminates the need for a local `kubectl port-forward` to reach KCP: the Job
+# Eliminates the need for a local `kubectl port-forward` to reach kcp: the Job
 # runs kubectl against https://kcp-front-proxy.kcp.svc.cluster.local:8443 using
 # the same cert-manager-issued admin client certificate that is used by the host
 # kubeconfig.

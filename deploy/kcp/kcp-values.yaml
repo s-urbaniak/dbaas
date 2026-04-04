@@ -1,4 +1,4 @@
-# KCP Helm values for a local kind/minikube cluster.
+# kcp Helm values for a local kind/minikube cluster.
 # Ref: https://kcp-dev.github.io/helm-charts
 
 # Required: hostname used in TLS SANs and workspace URLs.

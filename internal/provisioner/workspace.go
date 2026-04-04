@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package provisioner creates and manages KCP consumer workspaces for the DBaaS demo.
+// Package provisioner creates and manages kcp consumer workspaces for the DBaaS demo.
 package provisioner
 
 import (
@@ -76,17 +76,17 @@ const (
 	workspaceCredentialsScoped workspaceCredentialMode = "scoped"
 )
 
-// Provisioner creates and manages KCP consumer workspaces.
+// Provisioner creates and manages kcp consumer workspaces.
 type Provisioner struct {
 	// ProcessContext is canceled when the provisioner process is shutting down.
 	ProcessContext context.Context
-	// AdminConfig is the KCP admin REST config. Its Host may include a /clusters/... path.
+	// AdminConfig is the kcp admin REST config. Its Host may include a /clusters/... path.
 	AdminConfig *rest.Config
-	// ProviderWorkspace is the KCP path of the service-provider workspace (e.g. "root:dbaas-provider").
+	// ProviderWorkspace is the kcp path of the service-provider workspace (e.g. "root:dbaas-provider").
 	ProviderWorkspace string
 	// Bindings lists the APIBindings that every consumer workspace should have.
 	Bindings []WorkspaceBinding
-	// ConsumersWorkspace is the KCP path of the consumer org workspace (e.g. "root:consumers").
+	// ConsumersWorkspace is the kcp path of the consumer org workspace (e.g. "root:consumers").
 	ConsumersWorkspace string
 
 	// Headlamp integration (optional — no-op when K8sClient is nil).
@@ -118,11 +118,11 @@ type WorkspaceInfo struct {
 	DatabaseCount int
 }
 
-// kcpBaseURL strips the /clusters/... path from a KCP server URL, returning just the host+port.
+// kcpBaseURL strips the /clusters/... path from a kcp server URL, returning just the host+port.
 func kcpBaseURL(server string) (string, error) {
 	u, err := url.Parse(server)
 	if err != nil {
-		return "", fmt.Errorf("parsing KCP server URL %q: %w", server, err)
+		return "", fmt.Errorf("parsing kcp server URL %q: %w", server, err)
 	}
 	u.Path = ""
 	u.RawQuery = ""
@@ -130,7 +130,7 @@ func kcpBaseURL(server string) (string, error) {
 	return u.String(), nil
 }
 
-// configForWorkspace returns a REST config scoped to a specific KCP workspace path.
+// configForWorkspace returns a REST config scoped to a specific kcp workspace path.
 func (p *Provisioner) configForWorkspace(wsPath string) (*rest.Config, error) {
 	base, err := kcpBaseURL(p.AdminConfig.Host)
 	if err != nil {
@@ -656,9 +656,9 @@ func (p *Provisioner) KubeconfigBytes(
 }
 
 // AdminKubeconfigBytes generates a root workspace kubeconfig using the same
-// external KCP base URL tenant workspace kubeconfigs use.
+// external kcp base URL tenant workspace kubeconfigs use.
 func (p *Provisioner) AdminKubeconfigBytes(ctx context.Context) ([]byte, error) {
-	baseURL, err := p.externalKCPBaseURL(ctx)
+	baseURL, err := p.externalkcpBaseURL(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -695,7 +695,7 @@ func (p *Provisioner) AdminKubeconfigBytes(ctx context.Context) ([]byte, error) 
 	return clientcmd.Write(*cfg)
 }
 
-func (p *Provisioner) externalKCPBaseURL(ctx context.Context) (string, error) {
+func (p *Provisioner) externalkcpBaseURL(ctx context.Context) (string, error) {
 	parentPath, workspaceName, found := strings.Cut(p.ConsumersWorkspace, ":")
 	if !found {
 		return "", fmt.Errorf("consumers workspace %q is not nested under a parent workspace", p.ConsumersWorkspace)

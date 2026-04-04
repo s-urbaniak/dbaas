@@ -4,7 +4,7 @@ HELM_HEADLAMP_VALUES := deploy/headlamp/values.yaml
 HEADLAMP_PLUGIN_DIR := headlamp-plugin/kcp
 
 .PHONY: build-headlamp-plugin deploy-headlamp-plugin bootstrap-headlamp-kubeconfig deploy-headlamp undeploy-headlamp
-build-headlamp-plugin: ## Build the Headlamp KCP plugin bundle
+build-headlamp-plugin: ## Build the Headlamp kcp plugin bundle
 	cd $(HEADLAMP_PLUGIN_DIR) && npm ci && npx headlamp-plugin build
 
 deploy-headlamp-plugin: build-headlamp-plugin ## Publish the Headlamp plugin ConfigMap
@@ -19,7 +19,7 @@ deploy-headlamp-plugin: build-headlamp-plugin ## Publish the Headlamp plugin Con
 bootstrap-headlamp-kubeconfig: ## Refresh the shared Headlamp kubeconfig secret data
 	bash $(SCRIPTS_DIR)/bootstrap_headlamp_kubeconfig.sh
 
-deploy-headlamp: deploy-headlamp-plugin ## Install Headlamp and its KCP plugin
+deploy-headlamp: deploy-headlamp-plugin ## Install Headlamp and its kcp plugin
 	$(KUBECTL) apply -f deploy/headlamp/kubeconfig-secret.yaml
 	$(KUBECTL) apply -f deploy/headlamp/rbac.yaml
 	$(HELM) upgrade --install headlamp $(HELM_HEADLAMP_CHART) \
