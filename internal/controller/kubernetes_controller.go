@@ -535,11 +535,12 @@ func (p *KubernetesMountProxy) Handler() http.Handler {
 
 		proxy := httputil.NewSingleHostReverseProxy(target)
 		proxy.Transport = transport
-		originalDirector := proxy.Director
-		proxy.Director = func(req *http.Request) {
-			originalDirector(req)
-			req.URL.Path = joinURLPath(target.Path, upstreamPath)
-			req.Host = target.Host
+		proxy.Rewrite = func(req *httputil.ProxyRequest) {
+			req.Out.URL.Scheme = target.Scheme
+			req.Out.URL.Host = target.Host
+			req.Out.URL.Path = joinURLPath(target.Path, upstreamPath)
+			req.Out.Host = target.Host
+			req.SetXForwarded()
 		}
 		proxy.ServeHTTP(w, r)
 	})
