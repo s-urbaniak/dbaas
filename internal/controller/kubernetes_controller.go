@@ -535,6 +535,7 @@ func (p *KubernetesMountProxy) Handler() http.Handler {
 
 		proxy := httputil.NewSingleHostReverseProxy(target)
 		proxy.Transport = transport
+		proxy.Director = nil
 		proxy.Rewrite = func(req *httputil.ProxyRequest) {
 			req.Out.URL.Scheme = target.Scheme
 			req.Out.URL.Host = target.Host

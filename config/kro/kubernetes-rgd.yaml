@@ -12,16 +12,16 @@ spec:
     kind: Kubernetes
     types:
       MachineCount:
-        controlPlane: 'integer | minimum=1 | description="Number of control-plane nodes to provision for the cluster."'
-        worker: 'integer | minimum=0 | description="Number of worker nodes to provision for the cluster."'
+        controlPlane: 'integer | minimum=1 description="Number of control-plane nodes to provision for the cluster."'
+        worker: 'integer | minimum=0 description="Number of worker nodes to provision for the cluster."'
     spec:
-      allowSchedulingOnControlPlanes: 'boolean | default=true | description="Allow regular pods to be scheduled onto control-plane nodes. Defaults to true."'
+      allowSchedulingOnControlPlanes: 'boolean | default=true description="Allow regular pods to be scheduled onto control-plane nodes. Defaults to true."'
       machineCount: 'MachineCount | description="Requested control-plane and worker node counts for the cluster."'
     status:
-      URL: 'string | description="Internal mount endpoint that kcp uses to reach the provisioned cluster."'
-      mountedWorkspace: 'string | description="Name of the mounted child workspace created in the tenant workspace for this cluster."'
-      phase: 'string | description="High-level lifecycle phase reported by the kubernetes-controller."'
-      ready: 'boolean | description="Whether the provisioned CAPD cluster is ready for use and mountable."'
+      URL: '${cluster.metadata.name}'
+      mountedWorkspace: '${cluster.metadata.name}'
+      phase: '${cluster.status.phase}'
+      ready: '${cluster.status.conditions.exists(c, c.type == "Available" && c.status == "True")}'
 
   resources:
     - id: dockerCluster
