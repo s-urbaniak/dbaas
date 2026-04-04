@@ -645,6 +645,72 @@ func (p *Provisioner) KubeconfigBytes(
 	return clientcmd.Write(*cfg)
 }
 
+// AdminKubeconfigBytes generates a root workspace kubeconfig using the same
+// external KCP base URL tenant workspace kubeconfigs use.
+func (p *Provisioner) AdminKubeconfigBytes(ctx context.Context) ([]byte, error) {
+	baseURL, err := p.externalKCPBaseURL(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	cluster := clientcmdapi.NewCluster()
+	cluster.Server = baseURL + "/clusters/root"
+	cluster.InsecureSkipTLSVerify = p.AdminConfig.Insecure
+	if !cluster.InsecureSkipTLSVerify {
+		cluster.CertificateAuthorityData = p.AdminConfig.CAData
+	}
+
+	authInfo := clientcmdapi.NewAuthInfo()
+	switch {
+	case p.AdminConfig.BearerToken != "":
+		authInfo.Token = p.AdminConfig.BearerToken
+	case len(p.AdminConfig.CertData) > 0:
+		authInfo.ClientCertificateData = p.AdminConfig.CertData
+		authInfo.ClientKeyData = p.AdminConfig.KeyData
+	default:
+		authInfo.ClientCertificate = p.AdminConfig.CertFile
+		authInfo.ClientKey = p.AdminConfig.KeyFile
+	}
+
+	kubeCtx := clientcmdapi.NewContext()
+	kubeCtx.Cluster = "root"
+	kubeCtx.AuthInfo = "root"
+
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["root"] = cluster
+	cfg.AuthInfos["root"] = authInfo
+	cfg.Contexts["root"] = kubeCtx
+	cfg.CurrentContext = "root"
+
+	return clientcmd.Write(*cfg)
+}
+
+func (p *Provisioner) externalKCPBaseURL(ctx context.Context) (string, error) {
+	parentPath, workspaceName, found := strings.Cut(p.ConsumersWorkspace, ":")
+	if !found {
+		return "", fmt.Errorf("consumers workspace %q is not nested under a parent workspace", p.ConsumersWorkspace)
+	}
+
+	parentClient, err := p.kcpClientForWorkspace(parentPath)
+	if err != nil {
+		return "", fmt.Errorf("creating parent workspace client: %w", err)
+	}
+
+	workspace, err := parentClient.TenancyV1alpha1().Workspaces().Get(ctx, workspaceName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("getting consumers workspace %q: %w", p.ConsumersWorkspace, err)
+	}
+	if workspace.Spec.URL == "" {
+		return "", fmt.Errorf("workspace %q has no URL (not ready yet?)", p.ConsumersWorkspace)
+	}
+
+	baseURL, err := kcpBaseURL(workspace.Spec.URL)
+	if err != nil {
+		return "", err
+	}
+	return baseURL, nil
+}
+
 func (p *Provisioner) ensureScopedWorkspaceCredentials(
 	ctx context.Context,
 	wsPath string,

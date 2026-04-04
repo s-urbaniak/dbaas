@@ -107,6 +107,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", handleIndex(prov))
+	mux.HandleFunc("GET /api/admin.kubeconfig", handleAdminKubeconfig(prov))
 	mux.HandleFunc("POST /api/workspaces", handleCreateWorkspace(prov))
 	mux.HandleFunc("GET /api/workspaces/{name}/kubeconfig", handleKubeconfig(prov))
 	mux.HandleFunc("POST /api/workspaces/{name}/delete", handleDeleteWorkspace(prov))
@@ -189,6 +190,19 @@ func handleCreateWorkspace(prov *provisioner.Provisioner) http.HandlerFunc {
 			return
 		}
 		http.Redirect(w, r, "/?success="+url.QueryEscape("Workspace "+name+" provisioned successfully"), http.StatusSeeOther)
+	}
+}
+
+func handleAdminKubeconfig(prov *provisioner.Provisioner) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		data, err := prov.AdminKubeconfigBytes(r.Context())
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-yaml")
+		w.Header().Set("Content-Disposition", `attachment; filename="admin.kubeconfig"`)
+		_, _ = w.Write(data)
 	}
 }
 
