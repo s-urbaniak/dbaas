@@ -36,6 +36,8 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
+	kcpapisv1alpha2 "github.com/kcp-dev/sdk/apis/apis/v1alpha2"
+
 	"github.com/s-urbaniak/dbaas/internal/provisioner"
 )
 
@@ -102,8 +104,8 @@ func main() {
 		AdminConfig:       cfg,
 		ProviderWorkspace: providerWorkspace,
 		Bindings: []provisioner.WorkspaceBinding{
-			{Name: "dbaas", ExportName: exportName},
-			{Name: "kubernetes", ExportName: kubernetesExport},
+			{Name: "dbaas", ExportName: exportName, PermissionClaims: []kcpapisv1alpha2.AcceptablePermissionClaim{acceptedEventsClaim()}},
+			{Name: "kubernetes", ExportName: kubernetesExport, PermissionClaims: []kcpapisv1alpha2.AcceptablePermissionClaim{acceptedEventsClaim()}},
 		},
 		ConsumersWorkspace: consumersWorkspace,
 		K8sClient:          k8sClient,
@@ -297,4 +299,18 @@ func forwardedHeaderHost(value string) string {
 		}
 	}
 	return ""
+}
+
+// acceptedEventsClaim returns a permission claim that accepts all events with full access.
+func acceptedEventsClaim() kcpapisv1alpha2.AcceptablePermissionClaim {
+	return kcpapisv1alpha2.AcceptablePermissionClaim{
+		ScopedPermissionClaim: kcpapisv1alpha2.ScopedPermissionClaim{
+			PermissionClaim: kcpapisv1alpha2.PermissionClaim{
+				GroupResource: kcpapisv1alpha2.GroupResource{Resource: "events"},
+				Verbs:         []string{"*"},
+			},
+			Selector: kcpapisv1alpha2.PermissionClaimSelector{MatchAll: true},
+		},
+		State: kcpapisv1alpha2.ClaimAccepted,
+	}
 }
