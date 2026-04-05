@@ -92,6 +92,18 @@ No port-forwarding is needed. The kind cluster exposes:
 
 Open `http://localhost:8090` once the pipeline completes.
 
+If you open the provisioner through `localhost`, `127.0.0.1`, or another host
+IP such as `192.168.178.201`, the downloaded kubeconfigs and Headlamp links use
+that same host with ports `6443` and `4466`.
+
+To make the kcp front-proxy certificate valid for additional hostnames or IPs,
+set `KCP_FRONT_PROXY_EXTRA_SANS` when deploying kcp:
+
+```bash
+make deploy-kcp \
+  KCP_FRONT_PROXY_EXTRA_SANS=192.168.178.201,127.0.0.1,localhost
+```
+
 The same kind cluster also acts as a Cluster API management cluster. `make
 deploy` installs Cluster API core providers, the Docker infrastructure
 provider (CAPD), and a `ClusterResourceSet` that applies Calico to
@@ -113,6 +125,9 @@ make kind-delete
 3. Wait for the workspace to become `Ready`.
 4. Click `kubeconfig` to download credentials or `Headlamp` to open the
    workspace in the GUI.
+
+If you opened the UI through a different hostname or IP, those links are
+rendered with that same host automatically.
 
 For newly provisioned workspaces, the provisioner creates a workspace-local
 service account, token secret, and `ClusterRoleBinding`, and builds the

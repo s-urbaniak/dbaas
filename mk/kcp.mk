@@ -2,7 +2,7 @@ HELM_KCP_CHART := kcp/kcp
 HELM_KCP_NS := kcp
 HELM_KCP_VALUES := deploy/kcp/kcp-values.yaml
 
-.PHONY: deploy-kcp undeploy-kcp
+.PHONY: deploy-kcp undeploy-kcp apply-kcp-front-proxy-cert
 deploy-kcp: ## Install kcp with in-cluster front-proxy workspace-controller access
 	$(KUBECTL) create namespace $(HELM_KCP_NS) \
 	  --dry-run=client -o yaml | $(KUBECTL) apply -f -
@@ -10,6 +10,7 @@ deploy-kcp: ## Install kcp with in-cluster front-proxy workspace-controller acce
 	$(HELM) upgrade --install kcp $(HELM_KCP_CHART) \
 	  -n $(HELM_KCP_NS) --create-namespace \
 	  -f $(HELM_KCP_VALUES)
+	$(MAKE) apply-kcp-front-proxy-cert
 	@echo "Waiting for kcp pods to be ready..."
 	$(KUBECTL) -n $(HELM_KCP_NS) rollout status deployment/kcp --timeout=600s
 	$(KUBECTL) -n $(HELM_KCP_NS) rollout status deployment/kcp-front-proxy --timeout=600s
@@ -21,6 +22,14 @@ deploy-kcp: ## Install kcp with in-cluster front-proxy workspace-controller acce
 undeploy-kcp: ## Remove kcp from the local cluster
 	$(HELM) uninstall kcp -n $(HELM_KCP_NS) || true
 	$(KUBECTL) delete -f deploy/kcp/external-admin-kubeconfig-service.yaml --ignore-not-found
+
+.PHONY: apply-kcp-front-proxy-cert
+apply-kcp-front-proxy-cert: ## Reconcile the kcp front-proxy certificate with default and extra SANs
+	KCP_FRONT_PROXY_EXTRA_SANS='$(KCP_FRONT_PROXY_EXTRA_SANS)' \
+	  $(SCRIPTS_DIR)/render_kcp_front_proxy_cert.sh $(HELM_KCP_NS) | $(KUBECTL) apply -f -
+	$(KUBECTL) -n $(HELM_KCP_NS) wait --for=condition=Ready certificate/kcp-front-proxy --timeout=600s
+	$(KUBECTL) -n $(HELM_KCP_NS) rollout restart deployment/kcp-front-proxy
+	$(KUBECTL) -n $(HELM_KCP_NS) rollout status deployment/kcp-front-proxy --timeout=600s
 
 .PHONY: get-kcp-kubeconfig
 get-kcp-kubeconfig: ## Build a self-contained kcp admin kubeconfig at KCP_KUBECONFIG

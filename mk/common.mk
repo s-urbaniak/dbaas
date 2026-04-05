@@ -7,6 +7,7 @@ MCK_SRC   ?= /Users/s.urbaniak/src/mongodb-kubernetes/config/crd/bases
 ATLAS_SRC ?= /Users/s.urbaniak/src/mongodb-atlas-kubernetes/config/generated/crd/bases
 
 KCP_KUBECONFIG ?= /tmp/kcp-admin.kubeconfig
+KCP_FRONT_PROXY_EXTRA_SANS ?=
 
 KO_DOCKER_REPO ?= kind.local
 KIND_CLUSTER_NAME ?= dbaas

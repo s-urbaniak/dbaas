@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -44,9 +45,10 @@ var indexHTML string
 var indexTmpl = template.Must(template.New("index").Parse(indexHTML))
 
 type pageData struct {
-	Workspaces []provisioner.WorkspaceInfo
-	Error      string
-	Success    string
+	Workspaces      []provisioner.WorkspaceInfo
+	Error           string
+	Success         string
+	HeadlampBaseURL string
 }
 
 func main() {
@@ -163,12 +165,17 @@ func shutdownServerOnSignal(ctx context.Context, server *http.Server) {
 
 func handleIndex(prov *provisioner.Provisioner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		data := pageData{}
+		data := pageData{
+			HeadlampBaseURL: "http://localhost:4466",
+		}
 		if msg := r.URL.Query().Get("success"); msg != "" {
 			data.Success = msg
 		}
 		if errMsg := r.URL.Query().Get("error"); errMsg != "" {
 			data.Error = errMsg
+		}
+		if baseURL, err := requestExternalBaseURL(r, "http", "4466"); err == nil {
+			data.HeadlampBaseURL = baseURL
 		}
 		workspaces, err := prov.ListWorkspaces(r.Context())
 		if err != nil {
@@ -200,7 +207,12 @@ func handleCreateWorkspace(prov *provisioner.Provisioner) http.HandlerFunc {
 
 func handleAdminKubeconfig(prov *provisioner.Provisioner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		data, err := prov.AdminKubeconfigBytes(r.Context())
+		baseURL, err := requestExternalBaseURL(r, "https", "6443")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		data, err := prov.AdminKubeconfigBytesForExternalBaseURL(r.Context(), baseURL)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -234,7 +246,12 @@ func handleKubeconfig(prov *provisioner.Provisioner) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("workspace %q has no URL (not ready yet?)", name), http.StatusConflict)
 			return
 		}
-		data, err := prov.KubeconfigBytes(r.Context(), workspace)
+		baseURL, err := requestExternalBaseURL(r, "https", "6443")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		data, err := prov.KubeconfigBytesForExternalBaseURL(r.Context(), workspace, baseURL)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -243,4 +260,41 @@ func handleKubeconfig(prov *provisioner.Provisioner) http.HandlerFunc {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.kubeconfig"`, name))
 		_, _ = w.Write(data)
 	}
+}
+
+func requestExternalBaseURL(r *http.Request, scheme, port string) (string, error) {
+	host := forwardedOrRequestHost(r)
+	return provisioner.ExternalBaseURLForHost(host, scheme, port)
+}
+
+func forwardedOrRequestHost(r *http.Request) string {
+	if host := forwardedHeaderHost(r.Header.Get("Forwarded")); host != "" {
+		return host
+	}
+	if host := firstForwardedHost(r.Header.Get("X-Forwarded-Host")); host != "" {
+		return host
+	}
+	return r.Host
+}
+
+func firstForwardedHost(value string) string {
+	if value == "" {
+		return ""
+	}
+	first, _, _ := strings.Cut(value, ",")
+	return strings.TrimSpace(first)
+}
+
+func forwardedHeaderHost(value string) string {
+	for _, entry := range strings.Split(value, ",") {
+		for _, part := range strings.Split(entry, ";") {
+			part = strings.TrimSpace(part)
+			if len(part) < 5 || !strings.EqualFold(part[:5], "host=") {
+				continue
+			}
+			host := strings.TrimSpace(part[5:])
+			return strings.Trim(host, `"`)
+		}
+	}
+	return ""
 }

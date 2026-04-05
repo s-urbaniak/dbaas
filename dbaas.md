@@ -430,11 +430,14 @@ kcp's PKI is managed by cert-manager. The important trust relationships are:
 
 Operationally important details:
 
-- the front-proxy serving cert includes both localhost and in-cluster DNS names
+- the front-proxy serving cert includes `localhost`, the in-cluster Service
+  DNS name, and any extra SANs supplied through
+  `KCP_FRONT_PROXY_EXTRA_SANS`
 - `/tmp/kcp-admin.kubeconfig` is materialized with inline cert data
 - in-cluster kubeconfigs point at
   `https://kcp-front-proxy.kcp.svc.cluster.local:8443`
-- host-facing kubeconfigs still point at `https://localhost:6443`
+- host-facing kubeconfigs rendered by the provisioner reuse the hostname or IP
+  used to open the UI and keep port `6443`
 
 ## Workspace Deletion Semantics
 

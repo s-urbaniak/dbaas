@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"strings"
 	"time"
@@ -609,8 +610,22 @@ func (p *Provisioner) KubeconfigBytes(
 	ctx context.Context,
 	workspace *kcptenancyv1alpha1.Workspace,
 ) ([]byte, error) {
+	return p.KubeconfigBytesForExternalBaseURL(ctx, workspace, "")
+}
+
+// KubeconfigBytesForExternalBaseURL generates a kubeconfig YAML for the given
+// workspace, optionally replacing the host:port portion with the supplied base.
+func (p *Provisioner) KubeconfigBytesForExternalBaseURL(
+	ctx context.Context,
+	workspace *kcptenancyv1alpha1.Workspace,
+	externalBaseURL string,
+) ([]byte, error) {
 	cluster := clientcmdapi.NewCluster()
-	cluster.Server = workspace.Spec.URL
+	serverURL, err := externalURLForServer(workspace.Spec.URL, externalBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	cluster.Server = serverURL
 	cluster.InsecureSkipTLSVerify = p.AdminConfig.Insecure
 	if !cluster.InsecureSkipTLSVerify {
 		cluster.CertificateAuthorityData = p.AdminConfig.CAData
@@ -658,9 +673,22 @@ func (p *Provisioner) KubeconfigBytes(
 // AdminKubeconfigBytes generates a root workspace kubeconfig using the same
 // external kcp base URL tenant workspace kubeconfigs use.
 func (p *Provisioner) AdminKubeconfigBytes(ctx context.Context) ([]byte, error) {
-	baseURL, err := p.externalkcpBaseURL(ctx)
-	if err != nil {
-		return nil, err
+	return p.AdminKubeconfigBytesForExternalBaseURL(ctx, "")
+}
+
+// AdminKubeconfigBytesForExternalBaseURL generates a root workspace kubeconfig
+// and optionally overrides the externally reachable base URL.
+func (p *Provisioner) AdminKubeconfigBytesForExternalBaseURL(
+	ctx context.Context,
+	externalBaseURL string,
+) ([]byte, error) {
+	baseURL := externalBaseURL
+	if baseURL == "" {
+		var err error
+		baseURL, err = p.externalkcpBaseURL(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	cluster := clientcmdapi.NewCluster()
@@ -719,6 +747,79 @@ func (p *Provisioner) externalkcpBaseURL(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return baseURL, nil
+}
+
+func externalURLForServer(serverURL, externalBaseURL string) (string, error) {
+	if externalBaseURL == "" {
+		return serverURL, nil
+	}
+
+	server, err := url.Parse(serverURL)
+	if err != nil {
+		return "", fmt.Errorf("parsing kcp server URL %q: %w", serverURL, err)
+	}
+	base, err := url.Parse(externalBaseURL)
+	if err != nil {
+		return "", fmt.Errorf("parsing external kcp base URL %q: %w", externalBaseURL, err)
+	}
+
+	server.Scheme = base.Scheme
+	server.Host = base.Host
+	return server.String(), nil
+}
+
+func ExternalBaseURLForHost(host, scheme, port string) (string, error) {
+	if host == "" {
+		return "", fmt.Errorf("host is required")
+	}
+	if scheme == "" {
+		return "", fmt.Errorf("scheme is required")
+	}
+	if port == "" {
+		return "", fmt.Errorf("port is required")
+	}
+
+	cleanHost, err := hostWithoutPort(host)
+	if err != nil {
+		return "", err
+	}
+	return (&url.URL{
+		Scheme: scheme,
+		Host:   net.JoinHostPort(cleanHost, port),
+	}).String(), nil
+}
+
+func hostWithoutPort(hostport string) (string, error) {
+	hostport = strings.TrimSpace(strings.Trim(hostport, `"`))
+	if hostport == "" {
+		return "", fmt.Errorf("host is required")
+	}
+
+	if strings.Contains(hostport, "://") {
+		u, err := url.Parse(hostport)
+		if err != nil {
+			return "", fmt.Errorf("parsing host %q: %w", hostport, err)
+		}
+		hostport = u.Host
+	}
+
+	if strings.HasPrefix(hostport, "[") {
+		host, port, err := net.SplitHostPort(hostport)
+		if err == nil && port != "" {
+			return host, nil
+		}
+		return strings.Trim(hostport, "[]"), nil
+	}
+
+	if host, port, err := net.SplitHostPort(hostport); err == nil && port != "" {
+		return host, nil
+	}
+
+	if strings.Count(hostport, ":") > 1 {
+		return hostport, nil
+	}
+
+	return hostport, nil
 }
 
 func (p *Provisioner) ensureScopedWorkspaceCredentials(

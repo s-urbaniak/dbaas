@@ -79,7 +79,7 @@
                      href="/api/workspaces/{{.Name}}/kubeconfig"
                      download="{{.Name}}.kubeconfig">↓ kubeconfig</a>
                   <a class="btn btn-sm btn-outline-secondary"
-                     href="http://localhost:4466/c/{{.Name}}"
+                     href="{{$.HeadlampBaseURL}}/c/{{.Name}}"
                      target="_blank" rel="noopener">↗ Headlamp</a>
                   {{end}}
                   <button class="btn btn-sm btn-outline-danger"
