@@ -27,7 +27,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	atlasv1 "github.com/s-urbaniak/dbaas/api/atlas/v1"
-	"github.com/s-urbaniak/dbaas/internal/controller"
+	atlascontroller "github.com/s-urbaniak/dbaas/internal/controller/atlas"
 )
 
 func main() {
@@ -57,7 +57,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.FlexClusterReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+	if err := (&atlascontroller.FlexClusterReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create FlexCluster controller")
 		os.Exit(1)
 	}

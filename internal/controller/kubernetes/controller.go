@@ -1,4 +1,4 @@
-package controller
+package kubernetes
 
 import (
 	"context"
@@ -48,7 +48,7 @@ var capiClusterGVK = schema.GroupVersionKind{
 const kubernetesFinalizer = "dbaas.mongodb.com/kubernetes-mount"
 const controlPlaneNoScheduleTaintKey = "node-role.kubernetes.io/control-plane"
 
-type KubernetesReconciler struct {
+type Reconciler struct {
 	client.Client
 
 	K8sClient          kubernetes.Interface
@@ -57,7 +57,7 @@ type KubernetesReconciler struct {
 	ProxyBaseURL       string
 }
 
-func (r *KubernetesReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(kubernetesGVK)
 	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
@@ -117,7 +117,7 @@ func (r *KubernetesReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 }
 
-func (r *KubernetesReconciler) reconcileDelete(ctx context.Context, obj *unstructured.Unstructured) (ctrl.Result, error) {
+func (r *Reconciler) reconcileDelete(ctx context.Context, obj *unstructured.Unstructured) (ctrl.Result, error) {
 	if !containsString(obj.GetFinalizers(), kubernetesFinalizer) {
 		return ctrl.Result{}, nil
 	}
@@ -139,13 +139,13 @@ func (r *KubernetesReconciler) reconcileDelete(ctx context.Context, obj *unstruc
 	return ctrl.Result{}, nil
 }
 
-func (r *KubernetesReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(kubernetesGVK)
 	return ctrl.NewControllerManagedBy(mgr).For(obj).Complete(r)
 }
 
-func (r *KubernetesReconciler) patchKubernetesStatus(
+func (r *Reconciler) patchKubernetesStatus(
 	ctx context.Context,
 	obj *unstructured.Unstructured,
 	phase string,
@@ -172,7 +172,7 @@ func (r *KubernetesReconciler) patchKubernetesStatus(
 	return nil
 }
 
-func (r *KubernetesReconciler) workloadClusterPhase(
+func (r *Reconciler) workloadClusterPhase(
 	ctx context.Context,
 	namespace string,
 	name string,
@@ -203,7 +203,7 @@ func (r *KubernetesReconciler) workloadClusterPhase(
 	return false, "Initializing", nil
 }
 
-func (r *KubernetesReconciler) clusterKubeconfigExists(ctx context.Context, namespace string, name string) (bool, error) {
+func (r *Reconciler) clusterKubeconfigExists(ctx context.Context, namespace string, name string) (bool, error) {
 	_, err := r.K8sClient.CoreV1().Secrets(namespace).Get(ctx, name+"-kubeconfig", metav1.GetOptions{})
 	if err == nil {
 		return true, nil
@@ -214,7 +214,7 @@ func (r *KubernetesReconciler) clusterKubeconfigExists(ctx context.Context, name
 	return false, fmt.Errorf("getting kubeconfig secret for %s/%s: %w", namespace, name, err)
 }
 
-func (r *KubernetesReconciler) ensureCalicoInstalled(ctx context.Context, namespace string, name string) error {
+func (r *Reconciler) ensureCalicoInstalled(ctx context.Context, namespace string, name string) error {
 	manifestConfigMap, err := r.K8sClient.CoreV1().ConfigMaps("default").Get(ctx, "dbaas-calico", metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("getting dbaas-calico configmap: %w", err)
@@ -294,7 +294,7 @@ func (r *KubernetesReconciler) ensureCalicoInstalled(ctx context.Context, namesp
 	return nil
 }
 
-func (r *KubernetesReconciler) reconcileControlPlaneScheduling(ctx context.Context, obj *unstructured.Unstructured) error {
+func (r *Reconciler) reconcileControlPlaneScheduling(ctx context.Context, obj *unstructured.Unstructured) error {
 	allowScheduling, found, err := unstructured.NestedBool(obj.Object, "spec", "allowSchedulingOnControlPlanes")
 	if err != nil {
 		return fmt.Errorf("reading spec.allowSchedulingOnControlPlanes: %w", err)
@@ -333,7 +333,7 @@ func (r *KubernetesReconciler) reconcileControlPlaneScheduling(ctx context.Conte
 	return nil
 }
 
-func (r *KubernetesReconciler) workloadRESTConfig(ctx context.Context, namespace string, name string) (*rest.Config, error) {
+func (r *Reconciler) workloadRESTConfig(ctx context.Context, namespace string, name string) (*rest.Config, error) {
 	secret, err := r.K8sClient.CoreV1().Secrets(namespace).Get(ctx, name+"-kubeconfig", metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("getting kubeconfig secret %s/%s-kubeconfig: %w", namespace, name, err)
@@ -372,7 +372,7 @@ func desiredControlPlaneTaints(taints []corev1.Taint, allowScheduling bool) ([]c
 	return updated, changed
 }
 
-func (r *KubernetesReconciler) ensureMountedWorkspace(
+func (r *Reconciler) ensureMountedWorkspace(
 	ctx context.Context,
 	clusterID string,
 	mountedWorkspace string,
@@ -430,7 +430,7 @@ func (r *KubernetesReconciler) ensureMountedWorkspace(
 	return nil
 }
 
-func (r *KubernetesReconciler) deleteMountedWorkspace(ctx context.Context, clusterID string, mountedWorkspace string) error {
+func (r *Reconciler) deleteMountedWorkspace(ctx context.Context, clusterID string, mountedWorkspace string) error {
 	tenantWorkspacePath, err := r.consumerWorkspacePathForCluster(ctx, clusterID)
 	if err != nil {
 		return err
@@ -449,7 +449,7 @@ func (r *KubernetesReconciler) deleteMountedWorkspace(ctx context.Context, clust
 	return nil
 }
 
-func (r *KubernetesReconciler) consumerWorkspacePathForCluster(ctx context.Context, clusterID string) (string, error) {
+func (r *Reconciler) consumerWorkspacePathForCluster(ctx context.Context, clusterID string) (string, error) {
 	clientset, err := r.kcpClientForWorkspace(r.ConsumersWorkspace)
 	if err != nil {
 		return "", err
@@ -466,7 +466,7 @@ func (r *KubernetesReconciler) consumerWorkspacePathForCluster(ctx context.Conte
 	return "", nil
 }
 
-func (r *KubernetesReconciler) kcpClientForWorkspace(workspacePath string) (kcpclientset.Interface, error) {
+func (r *Reconciler) kcpClientForWorkspace(workspacePath string) (kcpclientset.Interface, error) {
 	cfg := rest.CopyConfig(r.KCPConfig)
 	baseURL, err := url.Parse(cfg.Host)
 	if err != nil {

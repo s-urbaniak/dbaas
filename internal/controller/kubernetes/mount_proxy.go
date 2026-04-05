@@ -1,4 +1,4 @@
-package controller
+package kubernetes
 
 import (
 	"fmt"
@@ -13,11 +13,11 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-type KubernetesMountProxy struct {
+type MountProxy struct {
 	K8sClient kubernetes.Interface
 }
 
-func (p *KubernetesMountProxy) Handler() http.Handler {
+func (p *MountProxy) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/mounts/")
 		parts := strings.SplitN(path, "/", 3)

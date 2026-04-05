@@ -16,7 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"github.com/s-urbaniak/dbaas/internal/controller"
+	kubernetescontroller "github.com/s-urbaniak/dbaas/internal/controller/kubernetes"
 )
 
 func main() {
@@ -67,7 +67,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	reconciler := &controller.KubernetesReconciler{
+	reconciler := &kubernetescontroller.Reconciler{
 		Client:             mgr.GetClient(),
 		K8sClient:          k8sClient,
 		KCPConfig:          kcpConfig,
@@ -84,7 +84,7 @@ func main() {
 
 	proxyServer := &http.Server{
 		Addr:    proxyAddr,
-		Handler: (&controller.KubernetesMountProxy{K8sClient: k8sClient}).Handler(),
+		Handler: (&kubernetescontroller.MountProxy{K8sClient: k8sClient}).Handler(),
 	}
 	go func() {
 		<-ctx.Done()

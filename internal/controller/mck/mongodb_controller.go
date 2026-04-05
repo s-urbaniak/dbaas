@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package mck
 
 import (
 	"context"
@@ -61,7 +61,6 @@ func (r *MongoDBReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).For(&mckv1.MongoDB{}).Complete(r)
 }
 
-// readyCondition returns a metav1.Condition representing a Ready=True condition.
 func readyCondition(message string) metav1.Condition {
 	return metav1.Condition{
 		Type:               "Ready",

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package controller
+package atlas
 
 import (
 	"context"
@@ -72,4 +72,14 @@ func (r *FlexClusterReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 func (r *FlexClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).For(&atlasv1.FlexCluster{}).Complete(r)
+}
+
+func readyCondition(message string) metav1.Condition {
+	return metav1.Condition{
+		Type:               "Ready",
+		Status:             metav1.ConditionTrue,
+		Reason:             "Reconciled",
+		Message:            message,
+		LastTransitionTime: metav1.NewTime(time.Now().UTC()),
+	}
 }

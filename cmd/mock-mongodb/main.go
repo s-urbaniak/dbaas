@@ -27,7 +27,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	mckv1 "github.com/s-urbaniak/dbaas/api/mck/v1"
-	"github.com/s-urbaniak/dbaas/internal/controller"
+	mckcontroller "github.com/s-urbaniak/dbaas/internal/controller/mck"
 )
 
 func main() {
@@ -57,7 +57,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.MongoDBReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+	if err := (&mckcontroller.MongoDBReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
 		ctrl.Log.Error(err, "unable to create MongoDB controller")
 		os.Exit(1)
 	}
