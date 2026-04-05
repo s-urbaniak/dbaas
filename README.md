@@ -304,34 +304,18 @@ make capd-quickstart-down
 
 ## Repository Layout
 
-```text
-├── cmd/
-│   ├── mock-mongodb/
-│   ├── kubernetes-controller/
-│   └── provisioner/
-├── internal/
-│   ├── controller/
-│   └── provisioner/
-├── mk/
-├── config/
-│   ├── kro/
-│   ├── mck-crds/
-│   ├── atlas-crds/
-│   └── sync-agent/
-├── deploy/
-│   ├── capi/
-│   ├── kind/
-│   ├── kcp/
-│   ├── kro/
-│   ├── headlamp/
-│   ├── mock-mongodb/
-│   └── provisioner/
-├── scripts/
-├── headlamp-plugin/kcp/
-├── dbaas.md
-├── Makefile
-└── go.mod
-```
+- `cmd/`: service entrypoints for the mock controller, Kubernetes controller,
+  and provisioner.
+- `config/`: checked-in CRDs, kro graphs, and sync-agent resource manifests.
+- `deploy/`: deploy-time manifests and overlays for the local platform
+  components.
+- `headlamp-plugin/`: custom Headlamp plugin code for the kcp workspace UI.
+- `internal/`: controller and provisioner implementation packages.
+- `mk/`: makefile fragments for build, deploy, and teardown workflows.
+- `scripts/`: small helper scripts used by the repo.
+- `dbaas.md`: architecture and operations notes.
+- `Makefile`: top-level entrypoint for the local deployment workflow.
+- `go.mod`: Go module definition and dependency roots.
 
 ## Further Reading
 
