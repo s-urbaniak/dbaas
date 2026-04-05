@@ -1,7 +1,8 @@
 # PublishedResource tells the kcp API Sync Agent to:
-# 1. Expose the MongoDBDatabase CRD as an APIExport in the root:dbaas-provider workspace.
-# 2. Sync MongoDBDatabase instances created in kcp workspaces down to the
-#    physical cluster where kro and the mock controllers run.
+# 1. Expose the Database CRD as an APIExport in the root:dbaas-provider workspace.
+# 2. Sync Database instances created in kcp workspaces down to the
+#    physical cluster where kro, the mock MCK controller, and the Atlas
+#    operator run.
 # 3. Propagate status changes back up to the kcp workspace.
 #
 # Field names match syncagent.kcp.io/v1alpha1 schema:
@@ -12,7 +13,7 @@
 apiVersion: syncagent.kcp.io/v1alpha1
 kind: PublishedResource
 metadata:
-  name: mongodatabases
+  name: databases
   namespace: kcp
   labels:
     dbaas.mongodb.com/published-resource-group: mongodb
@@ -21,6 +22,6 @@ spec:
     # kro v0.9.0 always creates CRDs in the kro.run group regardless of the
     # RGD metadata.name — the group cannot be customised via Helm values.
     apiGroup: kro.run
-    kind: MongoDBDatabase
+    kind: Database
     versions:
       - v1alpha1

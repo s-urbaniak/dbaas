@@ -6,14 +6,15 @@ Kubernetes operators.
 
 Consumers currently interact with two tenant-facing APIs:
 
-- `kro.run/v1alpha1 MongoDBDatabase`
+- `kro.run/v1alpha1 Database`
 - `kro.run/v1alpha1 Kubernetes`
 
-`MongoDBDatabase` routes each request to either an on-prem MongoDB cluster via
-[MCK](https://github.com/mongodb/mongodb-kubernetes) or an Atlas
-`FlexCluster` via the [Atlas Kubernetes
-Operator](https://github.com/mongodb/mongodb-atlas-kubernetes),
-depending on `spec.provider`.
+`Database` routes each request to either an on-prem MongoDB cluster via
+[MCK](https://github.com/mongodb/mongodb-kubernetes) or an Atlas generated
+resource via the [Atlas Kubernetes
+Operator](https://github.com/mongodb/mongodb-atlas-kubernetes), depending on
+`spec.provider`. Cloud-backed databases can render either a generated
+`FlexCluster` or a generated `Cluster` configured as an M0 shared cluster.
 
 `Kubernetes` provisions a CAPD-backed workload cluster and mounts it back into
 the tenant workspace as a child workspace so the tenant can `kubectl` into it
@@ -25,7 +26,7 @@ resource lifecycle, see [dbaas.md](dbaas.md).
 ## What This Demo Does
 
 - provisions tenant workspaces under `root:consumers`
-- exposes two tenant-facing APIs: `kro.run/v1alpha1 MongoDBDatabase` and
+- exposes two tenant-facing APIs: `kro.run/v1alpha1 Database` and
   `kro.run/v1alpha1 Kubernetes`
 - syncs tenant objects into the physical cluster through the API Sync Agent
 - lets kro create backend child resources based on the tenant spec
@@ -35,11 +36,12 @@ High-level flow:
 
 1. A tenant creates a workspace in the provisioner UI.
 2. The tenant downloads a kubeconfig or opens the workspace in Headlamp.
-3. The tenant creates a `MongoDBDatabase` or `Kubernetes` resource.
+3. The tenant creates a `Database` or `Kubernetes` resource.
 4. The API Sync Agent mirrors it into the physical cluster.
 5. kro creates the backing resources.
-6. Mock controllers or the `kubernetes-controller` write backend status and
-   the result syncs back to kcp.
+6. The mock MongoDB controller, the real Atlas operator, or the
+   `kubernetes-controller` write backend status and the result syncs back to
+   kcp.
 
 ## Quick Start
 
@@ -75,11 +77,19 @@ sudo sysctl --system
 make deploy
 ```
 
+For Atlas-backed databases, export credentials before deploy:
+
+```bash
+export ATLAS_ORG_ID=...
+export ATLAS_PUBLIC_API_KEY=...
+export ATLAS_PRIVATE_API_KEY=...
+```
+
 This runs the full pipeline:
 
 ```text
 kind -> helm-repos -> cert-manager -> capi -> kcp -> crds -> kro -> kubeconfig
--> bootstrap -> sync-agent -> provisioner -> controllers -> headlamp
+-> bootstrap -> sync-agent -> provisioner -> controllers -> atlas -> headlamp
 ```
 
 No port-forwarding is needed. The kind cluster exposes:
@@ -141,13 +151,13 @@ export KUBECONFIG=/path/to/tenant-a.kubeconfig
 
 kubectl apply -f - <<'EOF'
 apiVersion: kro.run/v1alpha1
-kind: MongoDBDatabase
+kind: Database
 metadata:
   name: my-onprem-db
   namespace: default
 spec:
-  provider: ON-PREMISE
-  region: DC_FRANKFURT
+  type: mongodb
+  class: on-premise
   version: "7.0"
   members: 3
   storage: 10Gi
@@ -159,29 +169,50 @@ Atlas example:
 ```bash
 kubectl apply -f - <<'EOF'
 apiVersion: kro.run/v1alpha1
-kind: MongoDBDatabase
+kind: Database
 metadata:
   name: my-atlas-db
   namespace: default
 spec:
+  type: mongodb
+  class: cloud
   provider: AWS
+  tier: FLEX
   region: US_EAST_1
   members: 3
+EOF
+```
+
+Atlas M0 example:
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: kro.run/v1alpha1
+kind: Database
+metadata:
+  name: my-atlas-m0-db
+  namespace: default
+spec:
+  type: mongodb
+  class: cloud
+  provider: AWS
+  tier: M0
+  region: US_EAST_1
 EOF
 ```
 
 ### Inspect status
 
 ```bash
-kubectl get mongodbdatabases
-kubectl get mongodatabase my-onprem-db -o jsonpath='{.status}'
+kubectl get databases
+kubectl get database my-onprem-db -o jsonpath='{.status}'
 ```
 
 For physical-cluster objects:
 
 ```bash
 unset KUBECONFIG
-kubectl get mongodb,flexclusters -A
+kubectl get mongodb,groups,clusters,flexclusters -A
 ```
 
 ### Create a tenant Kubernetes cluster
@@ -236,7 +267,6 @@ make refresh-crds
 
 ```bash
 go run ./cmd/mock-mongodb/
-go run ./cmd/mock-flexcluster/
 ```
 
 ### Run the provisioner locally
@@ -277,7 +307,6 @@ make capd-quickstart-down
 ```text
 ├── cmd/
 │   ├── mock-mongodb/
-│   ├── mock-flexcluster/
 │   ├── kubernetes-controller/
 │   └── provisioner/
 ├── internal/
@@ -296,7 +325,6 @@ make capd-quickstart-down
 │   ├── kro/
 │   ├── headlamp/
 │   ├── mock-mongodb/
-│   ├── mock-flexcluster/
 │   └── provisioner/
 ├── scripts/
 ├── headlamp-plugin/kcp/
@@ -309,7 +337,7 @@ make capd-quickstart-down
 
 - [dbaas.md](dbaas.md) for the full architecture and operations guide
 - [Makefile](Makefile) for the deploy pipeline
-- `config/kro/mongodatabase-rgd.yaml` for the generated `MongoDBDatabase` API
+- `config/kro/database-rgd.yaml` for the `Database` API
 
 Current known limitations:
 

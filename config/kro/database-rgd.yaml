@@ -1,0 +1,133 @@
+# kro ResourceGraphDefinition for Database.
+#
+# kro reads this and:
+#   1. Auto-generates the CRD  dbaas.mongodb.com/v1alpha1 Database
+#   2. Runs a dedicated microcontroller that, on each Database instance:
+#      - Creates a mongodb.com/v1 MongoDB child       (type=mongodb, class=on-premise)
+#      - Creates Atlas generated Group + FlexCluster  (type=mongodb, class=cloud, tier=FLEX)
+#      - Creates Atlas generated Group + Cluster      (type=mongodb, class=cloud, tier=M0)
+#
+# Ref: https://kro.run/docs/concepts/
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: databases.dbaas.mongodb.com
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: Database
+    spec:
+      type: 'string | enum="mongodb" default="mongodb" description="Logical database type."'
+      class: 'string | enum="on-premise,cloud" description="Backend class for this database."'
+      provider: 'string | enum="AWS,AZURE" default="AWS" description="Backing cloud provider for cloud databases."'
+      tier: 'string | enum="FLEX,M0" default="FLEX" description="Atlas cluster shape for cloud databases."'
+      region: 'string | description="Target cloud region for cloud databases."'
+      version: 'string | description="Requested MongoDB version for the provisioned database."'
+      members: 'integer | minimum=1 description="Requested replica set member count for the database."'
+      storage: 'string | description="Requested storage tier or size for the database."'
+    status:
+      providerState: '${atlasFlexCluster.status.?conditions[1].status.orValue("") == "False" ? atlasFlexCluster.status.conditions[1].message : (atlasCluster.status.?conditions[1].status.orValue("") == "False" ? atlasCluster.status.conditions[1].message : atlasFlexCluster.status.?v20250312.stateName.orValue(atlasCluster.status.?v20250312.stateName.orValue(mckMongoDB.status.phase)))}'
+      ready: '${atlasFlexCluster.status.?conditions[1].status.orValue(atlasCluster.status.?conditions[1].status.orValue("True"))}'
+      readyReason: '${atlasFlexCluster.status.?conditions[1].reason.orValue(atlasCluster.status.?conditions[1].reason.orValue("Ready"))}'
+      readyMessage: '${atlasFlexCluster.status.?conditions[1].message.orValue(atlasCluster.status.?conditions[1].message.orValue(""))}'
+      connectionString: '${atlasCluster.status.?v20250312.stateName.orValue("") != "" ? atlasCluster.status.v20250312.connectionStrings.standardSrv : (atlasFlexCluster.status.?v20250312.stateName.orValue("") != "" ? atlasFlexCluster.status.v20250312.connectionStrings.standardSrv : "mongodb://" + mckMongoDB.metadata.name + "." + mckMongoDB.metadata.namespace + ".svc:27017")}'
+      connectionStrings:
+        standard: '${atlasCluster.status.?v20250312.stateName.orValue("") != "" ? atlasCluster.status.v20250312.connectionStrings.standard : (atlasFlexCluster.status.?v20250312.stateName.orValue("") != "" ? atlasFlexCluster.status.v20250312.connectionStrings.standard : "mongodb://" + mckMongoDB.metadata.name + "." + mckMongoDB.metadata.namespace + ".svc:27017")}'
+        standardSrv: '${atlasCluster.status.?v20250312.stateName.orValue("") != "" ? atlasCluster.status.v20250312.connectionStrings.standardSrv : (atlasFlexCluster.status.?v20250312.stateName.orValue("") != "" ? atlasFlexCluster.status.v20250312.connectionStrings.standardSrv : "")}'
+
+  resources:
+    - id: atlasOperatorCredentials
+      externalRef:
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: mongodb-atlas-operator-api-key
+          namespace: mongodb-atlas-system
+
+    - id: mckMongoDB
+      includeWhen:
+        - ${schema.spec.type == "mongodb"}
+        - ${schema.spec.class == "on-premise"}
+      readyWhen:
+        - ${mckMongoDB.status.?phase.orValue("") == "Running"}
+      template:
+        apiVersion: mongodb.com/v1
+        kind: MongoDB
+        metadata:
+          name: ${schema.metadata.name}
+          namespace: ${schema.metadata.namespace}
+        spec:
+          type: ReplicaSet
+          version: "7.0.0"
+          credentials: mock-credentials
+          persistent: true
+
+    - id: atlasGroup
+      includeWhen:
+        - ${schema.spec.type == "mongodb"}
+        - ${schema.spec.class == "cloud"}
+      readyWhen:
+        - ${atlasGroup.status.conditions.exists(c, c.type == "Ready" && c.status == "True")}
+      template:
+        apiVersion: atlas.generated.mongodb.com/v1
+        kind: Group
+        metadata:
+          name: ${"atlas-group-" + schema.metadata.labels["syncagent.kcp.io/remote-object-cluster"]}
+          namespace: ${schema.metadata.namespace}
+        spec:
+          v20250312:
+            entry:
+              orgId: '${string(atlasOperatorCredentials.data.?orgId.orValue(b""))}'
+              name: ${"atlas-group-" + schema.metadata.labels["syncagent.kcp.io/remote-object-cluster"]}
+
+    - id: atlasFlexCluster
+      includeWhen:
+        - ${schema.spec.type == "mongodb"}
+        - ${schema.spec.class == "cloud"}
+        - ${schema.spec.tier == "FLEX"}
+      readyWhen:
+        - ${atlasFlexCluster.status.conditions.exists(c, c.type == "Ready" && c.status == "True")}
+      template:
+        apiVersion: atlas.generated.mongodb.com/v1
+        kind: FlexCluster
+        metadata:
+          name: ${schema.metadata.name}
+          namespace: ${schema.metadata.namespace}
+        spec:
+          v20250312:
+            groupRef:
+              name: ${"atlas-group-" + schema.metadata.labels["syncagent.kcp.io/remote-object-cluster"]}
+            entry:
+              name: ${schema.metadata.name}
+              providerSettings:
+                backingProviderName: ${schema.spec.provider}
+                regionName: ${schema.spec.region}
+
+    - id: atlasCluster
+      includeWhen:
+        - ${schema.spec.type == "mongodb"}
+        - ${schema.spec.class == "cloud"}
+        - ${schema.spec.tier == "M0"}
+      readyWhen:
+        - ${atlasCluster.status.conditions.exists(c, c.type == "Ready" && c.status == "True")}
+      template:
+        apiVersion: atlas.generated.mongodb.com/v1
+        kind: Cluster
+        metadata:
+          name: ${schema.metadata.name}
+          namespace: ${schema.metadata.namespace}
+        spec:
+          v20250312:
+            groupRef:
+              name: ${"atlas-group-" + schema.metadata.labels["syncagent.kcp.io/remote-object-cluster"]}
+            entry:
+              name: ${schema.metadata.name}
+              clusterType: REPLICASET
+              replicationSpecs:
+                - regionConfigs:
+                    - providerName: TENANT
+                      backingProviderName: ${schema.spec.provider}
+                      regionName: ${schema.spec.region}
+                      priority: 7
+                      electableSpecs:
+                        instanceSize: M0

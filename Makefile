@@ -13,6 +13,7 @@ include $(MK_DIR)/common.mk
 all: refresh-crds ## Refresh vendored upstream CRDs
 
 include $(MK_DIR)/crds.mk
+include $(MK_DIR)/ako.mk
 include $(MK_DIR)/bootstrap.mk
 include $(MK_DIR)/capi.mk
 include $(MK_DIR)/kcp.mk

@@ -9,13 +9,13 @@ deploy-kro: ## Install kro and the tenant ResourceGraphDefinitions
 	  -f $(HELM_KRO_VALUES)
 	@echo "Waiting for kro to be ready..."
 	$(KUBECTL) -n $(HELM_KRO_NS) rollout status deployment/kro --timeout=600s
-	$(KUBECTL) apply -f config/kro/mongodatabase-rgd.yaml
+	$(KUBECTL) apply -f config/kro/database-rgd.yaml
 	$(KUBECTL) apply -f config/kro/kubernetes-rgd.yaml
 	@echo "Waiting for kro to generate kubernetes.kro.run..."
 	@until $(KUBECTL) get crd kubernetes.kro.run >/dev/null 2>&1; do sleep 2; done
 	@echo "✓ kro deployed and ResourceGraphDefinitions applied"
 
 undeploy-kro: ## Remove kro and the tenant ResourceGraphDefinitions
-	$(KUBECTL) delete -f config/kro/mongodatabase-rgd.yaml --ignore-not-found
+	$(KUBECTL) delete -f config/kro/database-rgd.yaml --ignore-not-found
 	$(KUBECTL) delete -f config/kro/kubernetes-rgd.yaml --ignore-not-found
 	$(HELM) uninstall kro -n $(HELM_KRO_NS) || true

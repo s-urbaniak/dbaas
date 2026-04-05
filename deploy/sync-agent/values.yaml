@@ -1,9 +1,9 @@
 # API Sync Agent Helm values.
 
-# The sync agent creates an APIExport named mongodatabases.dbaas.mongodb.com in
+# The sync agent creates an APIExport named databases.dbaas.mongodb.com in
 # root:dbaas-provider. kcp then creates an APIExportEndpointSlice with the same
 # name. This tells the agent which endpoint slice to watch.
-apiExportEndpointSliceName: mongodatabases.dbaas.mongodb.com
+apiExportEndpointSliceName: databases.dbaas.mongodb.com
 
 # Secret (in the kcp namespace) with the kcp kubeconfig for the sync agent.
 # Created by the create-sync-agent-secret Makefile target.

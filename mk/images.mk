@@ -1,17 +1,15 @@
 .PHONY: ko-build ko-apply
-ko-build: ## Build the mock controller and provisioner images with ko
+ko-build: ## Build the local controller and provisioner images with ko
 	KO_DOCKER_REPO=$(KO_DOCKER_REPO) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) \
 	  $(KO) build --platform=$(KO_PLATFORMS) \
 	  ./cmd/mock-mongodb/ \
-	  ./cmd/mock-flexcluster/ \
 	  ./cmd/kubernetes-controller/ \
 	  ./cmd/provisioner/
 
-ko-apply: ## Build and apply the mock controller and provisioner manifests with ko
+ko-apply: ## Build and apply the local controller and provisioner manifests with ko
 	KO_DOCKER_REPO=$(KO_DOCKER_REPO) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) \
 	  $(KO) apply --platform=$(KO_PLATFORMS) \
 	  -f deploy/mock-mongodb/ \
-	  -f deploy/mock-flexcluster/ \
 	  -f deploy/kubernetes-controller/ \
 	  -f deploy/provisioner/
 

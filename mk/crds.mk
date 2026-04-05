@@ -8,10 +8,11 @@ refresh-mck-crds: ## Refresh MongoDB Community Operator CRDs from MCK_SRC
 	cp $(MCK_SRC)/mongodb.com_clustermongodbroles.yaml config/mck-crds/
 	@echo "✓ MCK CRDs refreshed from $(MCK_SRC)"
 
-refresh-atlas-crds: ## Refresh Atlas operator CRDs from ATLAS_SRC
+refresh-atlas-crds: ## Refresh Atlas operator generated CRDs from the pinned AKO commit
 	mkdir -p config/atlas-crds
-	cp $(ATLAS_SRC)/flexclusters.atlas.generated.mongodb.com.yaml config/atlas-crds/
-	@echo "✓ Atlas CRDs refreshed from $(ATLAS_SRC)"
+	$(CURL) -fsSL https://raw.githubusercontent.com/mongodb/mongodb-atlas-kubernetes/$(AKO_COMMIT)/internal/generated/crds/crds.yaml \
+	  -o config/atlas-crds/generated-crds.yaml
+	@echo "✓ Atlas CRDs refreshed from AKO commit $(AKO_COMMIT)"
 
 .PHONY: apply-mck-crds apply-atlas-crds apply-crds
 apply-mck-crds: ## Apply MongoDB Community Operator CRDs to the cluster

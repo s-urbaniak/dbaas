@@ -1,0 +1,434 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mongodb-atlas-operator
+  namespace: mongodb-atlas-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mongodb-atlas-operator
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - atlas.generated.mongodb.com
+    resources:
+      - clusters
+      - databaseusers
+      - flexclusters
+      - groups
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - atlas.generated.mongodb.com
+    resources:
+      - clusters/finalizers
+      - databaseusers/finalizers
+      - flexclusters/finalizers
+      - groups/finalizers
+    verbs:
+      - update
+  - apiGroups:
+      - atlas.generated.mongodb.com
+    resources:
+      - clusters/status
+      - databaseusers/status
+      - flexclusters/status
+      - groups/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - atlas.mongodb.com
+    resources:
+      - atlasbackupcompliancepolicies
+      - atlasbackuppolicies
+      - atlasbackupschedules
+      - atlascustomroles
+      - atlasdatabaseusers
+      - atlasdatafederations
+      - atlasdeployments
+      - atlasfederatedauths
+      - atlasipaccesslists
+      - atlasnetworkcontainers
+      - atlasnetworkpeerings
+      - atlasorgsettings
+      - atlasprivateendpoints
+      - atlasprojects
+      - atlassearchindexconfigs
+      - atlasstreamconnections
+      - atlasstreaminstances
+      - atlasteams
+      - atlasthirdpartyintegrations
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - atlas.mongodb.com
+    resources:
+      - atlasbackupcompliancepolicies/status
+      - atlasbackuppolicies/status
+      - atlasbackupschedules/status
+      - atlascustomroles/status
+      - atlasdatabaseusers/status
+      - atlasdatafederations/status
+      - atlasdeployments/status
+      - atlasfederatedauths/status
+      - atlasipaccesslists/status
+      - atlasnetworkcontainers/status
+      - atlasnetworkpeerings/status
+      - atlasorgsettings/status
+      - atlasprivateendpoints/status
+      - atlasprojects/status
+      - atlassearchindexconfigs/status
+      - atlasstreamconnections/status
+      - atlasstreaminstances/status
+      - atlasteams/status
+      - atlasthirdpartyintegrations/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - atlas.mongodb.com
+    resources:
+      - atlasipaccesslists/finalizers
+      - atlasnetworkcontainers/finalizers
+      - atlasnetworkpeerings/finalizers
+      - atlasorgsettings/finalizers
+      - atlasthirdpartyintegrations/finalizers
+    verbs:
+      - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mongodb-atlas-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mongodb-atlas-operator
+subjects:
+  - kind: ServiceAccount
+    name: mongodb-atlas-operator
+    namespace: mongodb-atlas-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mongodb-atlas-operator
+  namespace: mongodb-atlas-system
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - atlas.generated.mongodb.com
+    resources:
+      - clusters
+      - databaseusers
+      - flexclusters
+      - groups
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - atlas.generated.mongodb.com
+    resources:
+      - clusters/finalizers
+      - databaseusers/finalizers
+      - flexclusters/finalizers
+      - groups/finalizers
+    verbs:
+      - update
+  - apiGroups:
+      - atlas.generated.mongodb.com
+    resources:
+      - clusters/status
+      - databaseusers/status
+      - flexclusters/status
+      - groups/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - atlas.mongodb.com
+    resources:
+      - atlasbackupcompliancepolicies
+      - atlasbackuppolicies
+      - atlasbackupschedules
+      - atlascustomroles
+      - atlasdatabaseusers
+      - atlasdatafederations
+      - atlasdeployments
+      - atlasfederatedauths
+      - atlasipaccesslists
+      - atlasnetworkcontainers
+      - atlasnetworkpeerings
+      - atlasorgsettings
+      - atlasprivateendpoints
+      - atlasprojects
+      - atlassearchindexconfigs
+      - atlasstreamconnections
+      - atlasstreaminstances
+      - atlasteams
+      - atlasthirdpartyintegrations
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  - apiGroups:
+      - atlas.mongodb.com
+    resources:
+      - atlasbackupcompliancepolicies/status
+      - atlasbackuppolicies/status
+      - atlasbackupschedules/status
+      - atlascustomroles/status
+      - atlasdatabaseusers/status
+      - atlasdatafederations/status
+      - atlasdeployments/status
+      - atlasfederatedauths/status
+      - atlasipaccesslists/status
+      - atlasnetworkcontainers/status
+      - atlasnetworkpeerings/status
+      - atlasorgsettings/status
+      - atlasprivateendpoints/status
+      - atlasprojects/status
+      - atlassearchindexconfigs/status
+      - atlasstreamconnections/status
+      - atlasstreaminstances/status
+      - atlasteams/status
+      - atlasthirdpartyintegrations/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - atlas.mongodb.com
+    resources:
+      - atlasipaccesslists/finalizers
+      - atlasnetworkcontainers/finalizers
+      - atlasnetworkpeerings/finalizers
+      - atlasorgsettings/finalizers
+      - atlasthirdpartyintegrations/finalizers
+    verbs:
+      - update
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mongodb-atlas-operator
+  namespace: mongodb-atlas-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mongodb-atlas-operator
+subjects:
+  - kind: ServiceAccount
+    name: mongodb-atlas-operator
+    namespace: mongodb-atlas-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mongodb-atlas-operator-leader-election-role
+  namespace: mongodb-atlas-system
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mongodb-atlas-operator-leader-election-rolebinding
+  namespace: mongodb-atlas-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mongodb-atlas-operator-leader-election-role
+subjects:
+  - kind: ServiceAccount
+    name: mongodb-atlas-operator
+    namespace: mongodb-atlas-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodb-atlas-operator
+  namespace: mongodb-atlas-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mongodb-atlas-operator
+      app.kubernetes.io/instance: mongodb-atlas
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mongodb-atlas-operator
+        app.kubernetes.io/instance: mongodb-atlas
+    spec:
+      serviceAccountName: mongodb-atlas-operator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2000
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: manager
+          args:
+            - --atlas-domain=https://cloud.mongodb.com/
+            - --health-probe-bind-address=:8081
+            - --metrics-bind-address=:8080
+            - --object-deletion-protection=false
+            - --subobject-deletion-protection=false
+            - --leader-elect
+          image: AKO_IMAGE_PLACEHOLDER
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: OPERATOR_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: OPERATOR_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            limits:
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false

@@ -14,10 +14,11 @@ The high-level model is:
 - kcp provides tenant workspaces.
 - Cluster API + CAPD run in the physical cluster as local management-plane
   infrastructure for tenant workload clusters.
-- kro defines two tenant-facing APIs: `MongoDBDatabase` and `Kubernetes`.
+- kro defines two tenant-facing APIs: `Database` and `Kubernetes`.
 - Two API Sync Agent deployments export those APIs from the provider workspace
   and sync instances between kcp and the physical cluster.
-- Mock controllers reconcile MongoDB resources, and the
+- The mock MCK controller reconciles on-prem MongoDB resources, the Atlas
+  operator reconciles Atlas generated resources, and the
   `kubernetes-controller` reconciles tenant Kubernetes clusters and mounts.
 - A small provisioner creates consumer workspaces and maintains Headlamp
   access to them.
@@ -45,7 +46,7 @@ Physical Kubernetes cluster
 |       `-- root:consumers:<tenant>
 |           |-- APIBinding/dbaas
 |           |-- APIBinding/kubernetes
-|           |-- MongoDBDatabase objects
+|           |-- Database objects
 |           |-- Kubernetes objects
 |           `-- mounted child workspaces for provisioned tenant clusters
 |
@@ -54,14 +55,14 @@ Physical Kubernetes cluster
 |   `-- api-syncagent-kubernetes
 |
 |-- kro
-|   |-- ResourceGraphDefinition for MongoDBDatabase
+|   |-- ResourceGraphDefinition for Database
 |   `-- ResourceGraphDefinition for Kubernetes
 |
 |-- mock-mongodb controller
 |   `-- reconciles mongodb.com/v1 MongoDB
 |
-|-- mock-flexcluster controller
-|   `-- reconciles atlas.generated.mongodb.com/v1 FlexCluster
+|-- Atlas Kubernetes Operator
+|   `-- reconciles atlas.generated.mongodb.com/v1 Group, Cluster, and FlexCluster
 |
 |-- provisioner
 |   `-- creates and deletes consumer workspaces and kubeconfigs
@@ -84,7 +85,7 @@ Physical Kubernetes cluster
 4. The provisioner creates a workspace-local service account, token secret,
    and `ClusterRoleBinding` for newly provisioned workspaces.
 5. The tenant downloads a kubeconfig or opens the workspace in Headlamp.
-6. The tenant creates a `MongoDBDatabase` or `Kubernetes` object.
+6. The tenant creates a `Database` or `Kubernetes` object.
 7. The corresponding API Sync Agent mirrors the object into the physical
    cluster.
 8. kro creates the backing resources.
@@ -94,7 +95,7 @@ Physical Kubernetes cluster
 
 ## MongoDB Resource Lifecycle
 
-This section traces a single `MongoDBDatabase` through every layer of the
+This section traces a single `Database` through every layer of the
 system, using tenant workspace `root:consumers:test` and a database named
 `my-onprem-db` with `provider: ON-PREMISE`.
 
@@ -104,8 +105,8 @@ system, using tenant workspace `root:consumers:test` and a database named
 
   root:consumers:test
   +-----------------------------+
-  | MongoDBDatabase             |  1                +------------------+
-  |  ns:   default              | ---- sync down -->| MongoDBDatabase  |
+  | Database                    |  1                +------------------+
+  |  ns:   default              | ---- sync down -->| Database         |
   |  name: my-onprem-db         |                   |  ns: 1agg...     |
   |  spec.provider: ON-PREMISE  |                   |  name: 2747...   |
   |  status:             <------+---- sync up ----- |                  |
@@ -121,13 +122,13 @@ system, using tenant workspace `root:consumers:test` and a database named
                                                             | 3 aggregate
                                                             v
                                                +---------------------------+
-                                               | MongoDBDatabase.status    |
+                                               | Database.status           |
                                                |  state: ACTIVE            |
                                                |  connectionString: ...    |
                                                +---------------------------+
 ```
 
-### 1. Tenant creates MongoDBDatabase in kcp
+### 1. Tenant creates Database in kcp
 
 The tenant's kubeconfig points at the kcp front-proxy. From the tenant's
 perspective this is a normal `kubectl apply`.
@@ -157,33 +158,38 @@ Why the name changes:
 
 The original coordinates remain on the physical object as annotations.
 
-### 3. kro reconciles MongoDBDatabase into a child resource
+### 3. kro reconciles Database into a child resource
 
-The `ResourceGraphDefinition` in `config/kro/mongodatabase-rgd.yaml` uses
-`includeWhen` on `spec.provider`:
+The `ResourceGraphDefinition` in
+`config/kro/database-rgd.yaml` uses
+`includeWhen` on `spec.type` and `spec.class`:
 
-- `ON-PREMISE` creates `mongodb.com/v1 MongoDB`
-- `AWS` or `AZURE` creates `atlas.generated.mongodb.com/v1 FlexCluster`
+- `type=mongodb` and `class=on-premise` creates `mongodb.com/v1 MongoDB`
+- `type=mongodb` and `class=cloud` always creates
+  `atlas.generated.mongodb.com/v1 Group`
+- `type=mongodb`, `class=cloud`, and `spec.tier=FLEX` creates
+  `atlas.generated.mongodb.com/v1 FlexCluster`
+- `type=mongodb`, `class=cloud`, and `spec.tier=M0` creates
+  `atlas.generated.mongodb.com/v1 Cluster`
 
 kro uses the mirrored physical name and namespace for the child resource.
 
-### 4. Mock controller writes backend status
+### 4. Backend controller writes status
 
 The mock MongoDB controller writes `status.phase=Running` on
 `mongodb.com/v1 MongoDB`.
 
-The mock FlexCluster controller writes status on
-`atlas.generated.mongodb.com/v1 FlexCluster`.
+The Atlas operator writes status on the generated Atlas resources.
 
 ### 5. kro aggregates backend status
 
-kro writes derived status onto `MongoDBDatabase.status`, including:
+kro writes derived status onto `Database.status`, including:
 
 - `state`
 - `connectionString`
-- `Ready` condition
 
-The current graph mainly reflects the on-prem branch in this top-level status.
+The graph now derives those fields from either the mock MCK child or the
+generated Atlas child selected by `spec.class` and `spec.tier`.
 
 ### 6. Sync agent pushes status back to the tenant workspace
 
@@ -237,7 +243,7 @@ kcp hosts two important root-level workspaces:
 - `root:consumers`
 
 `root:dbaas-provider` is the service-provider workspace. The API Sync Agents
-publish the `MongoDBDatabase` and `Kubernetes` APIs from there.
+publish the `Database` and `Kubernetes` APIs from there.
 
 `root:consumers` is the parent for tenant workspaces. The provisioner creates
 child workspaces under it and adds the `dbaas` and `kubernetes` APIBindings
@@ -247,16 +253,17 @@ inside each one.
 
 kro owns the `ResourceGraphDefinition`s in:
 
-- `config/kro/mongodatabase-rgd.yaml`
+- `config/kro/database-rgd.yaml`
 - `config/kro/kubernetes-rgd.yaml`
 
 Today the generated tenant APIs are:
 
-- `kro.run/v1alpha1 MongoDBDatabase`
+- `kro.run/v1alpha1 Database`
 - `kro.run/v1alpha1 Kubernetes`
 
-The MongoDB graph branches on `spec.provider` and currently exposes richer
-top-level status for the on-prem path than for the Atlas path.
+The MongoDB graph branches on `spec.type` and `spec.class`, and the cloud
+branch also uses `spec.tier` to choose between Flex and M0-backed generated
+Atlas resources. `spec.provider` and `spec.region` are cloud-only inputs.
 
 The Kubernetes graph exposes:
 
@@ -273,7 +280,7 @@ The API Sync Agent runs as two deployments:
 - `api-syncagent-mongodb`
 - `api-syncagent-kubernetes`
 
-Together they export the generated `MongoDBDatabase` and `Kubernetes` APIs
+Together they export the generated `Database` and `Kubernetes` APIs
 from `root:dbaas-provider` and synchronize instances and status between kcp
 and the physical cluster.
 
@@ -281,17 +288,17 @@ Deploy order matters here:
 
 - MCK and Atlas CRDs must exist before kro applies the graph.
 - kro must apply the graphs before the sync agents start.
-- the sync agents must see `mongodbdatabases.kro.run` and
+- the sync agents must see `databases.kro.run` and
   `kubernetes.kro.run` at startup.
 
-### Mock controllers
+### MongoDB Controllers
 
-The mock controllers live in:
+The local mock MCK controller lives in:
 
-- `internal/controller/mongodb_controller.go`
-- `internal/controller/flexcluster_controller.go`
+- `internal/controller/mck/mongodb_controller.go`
 
-They simulate backend behavior rather than provisioning real infrastructure.
+It simulates the on-prem backend behavior, while Atlas-backed resources are
+reconciled by the real Atlas operator deployed from upstream source.
 
 ### Cluster API + CAPD
 
@@ -317,7 +324,7 @@ bootstrapping CAPD, or creating a workload cluster.
 The Kubernetes controller lives in:
 
 - `cmd/kubernetes-controller`
-- `internal/controller/kubernetes_controller.go`
+- `internal/controller/kubernetes/controller.go`
 
 It is responsible for:
 
@@ -341,7 +348,7 @@ It uses the published kcp SDK clientset directly for kcp-native resources:
 - `core.kcp.io/v1alpha1 LogicalCluster`
 
 It still uses the dynamic client only for counting
-`mongodbdatabases.kro.run` objects in tenant workspaces.
+`databases.kro.run` objects in tenant workspaces.
 
 Provisioner endpoints:
 
@@ -447,7 +454,7 @@ parent `Workspace` object in `root:consumers`.
 kcp then deletes:
 
 - the `APIBinding` inside the workspace
-- the `MongoDBDatabase` and `Kubernetes` objects inside the workspace
+- the `Database` and `Kubernetes` objects inside the workspace
 - the child `LogicalCluster`
 
 The parent `Workspace` object can remain visible briefly after the child
@@ -477,7 +484,7 @@ The deploy pipeline is:
 
 ```text
 kind -> helm-repos -> cert-manager -> capi -> kcp -> crds -> kro -> kubeconfig
--> bootstrap -> sync-agent -> provisioner -> controllers -> headlamp
+-> bootstrap -> sync-agent -> provisioner -> controllers -> atlas -> headlamp
 ```
 
 Important deploy details:
@@ -512,9 +519,9 @@ Important deploy details:
 Key paths in the current repository:
 
 - [Makefile](Makefile)
-- `config/kro/mongodatabase-rgd.yaml`
+- `config/kro/database-rgd.yaml`
 - `config/kro/kubernetes-rgd.yaml`
-- `internal/controller/kubernetes_controller.go`
+- `internal/controller/kubernetes/controller.go`
 - [main.go](cmd/provisioner/main.go)
 - [index.html](cmd/provisioner/static/index.html)
 - [workspace.go](internal/provisioner/workspace.go)

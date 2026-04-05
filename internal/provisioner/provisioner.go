@@ -33,7 +33,7 @@ import (
 var mongodbDatabaseGVR = schema.GroupVersionResource{
 	Group:    "kro.run",
 	Version:  "v1alpha1",
-	Resource: "mongodbdatabases",
+	Resource: "databases",
 }
 
 const (

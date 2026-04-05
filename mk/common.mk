@@ -4,7 +4,12 @@ ROOT_DIR := $(abspath .)
 SCRIPTS_DIR := $(ROOT_DIR)/scripts
 
 MCK_SRC   ?= /Users/s.urbaniak/src/mongodb-kubernetes/config/crd/bases
-ATLAS_SRC ?= /Users/s.urbaniak/src/mongodb-atlas-kubernetes/config/generated/crd/bases
+AKO_COMMIT ?= ad57bc1cca9482f78c6fb3271f43488a40ccdb2d
+AKO_SRC_DIR ?= /tmp/mongodb-atlas-kubernetes-$(AKO_COMMIT)
+AKO_RELEASE_VERSION ?= v2.13.2
+AKO_LEGACY_CRDS_DIR ?= $(AKO_SRC_DIR)/releases/$(AKO_RELEASE_VERSION)/deploy/crds
+ATLAS_OPERATOR_NAMESPACE ?= mongodb-atlas-system
+ATLAS_OPERATOR_SECRET_NAME ?= mongodb-atlas-operator-api-key
 
 KCP_KUBECONFIG ?= /tmp/kcp-admin.kubeconfig
 KCP_FRONT_PROXY_EXTRA_SANS ?=
@@ -18,6 +23,7 @@ HELM ?= helm
 KO ?= ko
 KIND ?= kind
 CLUSTERCTL ?= clusterctl
+CURL ?= curl
 
 .PHONY: require-%
 require-%:

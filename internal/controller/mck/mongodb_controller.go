@@ -19,18 +19,17 @@ package mck
 import (
 	"context"
 	"fmt"
-	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	mdbstatus "github.com/mongodb/mongodb-kubernetes/api/v1/status"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	mckv1 "github.com/s-urbaniak/dbaas/api/mck/v1"
+	mckv1 "github.com/mongodb/mongodb-kubernetes/api/v1/mdb"
 )
 
 // MongoDBReconciler mock-reconciles mongodb.com/v1 MongoDB resources.
-// It sets status.phase=Running and a Ready condition to simulate a real MCK operator.
+// It sets the upstream MCK phase and message fields to simulate a running cluster.
 type MongoDBReconciler struct {
 	client.Client
 }
@@ -44,12 +43,10 @@ func (r *MongoDBReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	patch := client.MergeFrom(obj.DeepCopy())
-	obj.Status.Phase = "Running"
+	obj.Status.Phase = mdbstatus.PhaseRunning
 	obj.Status.Version = obj.Spec.Version
-	obj.Status.ConnectionString = fmt.Sprintf("mongodb://%s.%s.svc:27017", obj.Name, obj.Namespace)
-	obj.Status.Conditions = []metav1.Condition{
-		readyCondition("Mock MCK MongoDB is running"),
-	}
+	obj.Status.Message = "Mock MCK MongoDB is running"
+	obj.Status.ObservedGeneration = obj.Generation
 
 	if err := r.Status().Patch(ctx, obj, patch); err != nil {
 		return ctrl.Result{}, fmt.Errorf("patching MongoDB status: %w", err)
@@ -59,14 +56,4 @@ func (r *MongoDBReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 func (r *MongoDBReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).For(&mckv1.MongoDB{}).Complete(r)
-}
-
-func readyCondition(message string) metav1.Condition {
-	return metav1.Condition{
-		Type:               "Ready",
-		Status:             metav1.ConditionTrue,
-		Reason:             "Reconciled",
-		Message:            message,
-		LastTransitionTime: metav1.NewTime(time.Now().UTC()),
-	}
 }

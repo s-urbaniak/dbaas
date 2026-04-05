@@ -5,7 +5,7 @@ deploy-phase1: deploy-capi deploy-kcp apply-crds deploy-kro ## Run the first hal
 	@echo "  Continue with: make deploy-phase2"
 
 .PHONY: deploy-phase2
-deploy-phase2: get-kcp-kubeconfig bootstrap-kcp-workspaces deploy-sync-agent create-provisioner-secret ko-apply ## Run the second half of the local deploy
+deploy-phase2: get-kcp-kubeconfig bootstrap-kcp-workspaces deploy-sync-agent create-provisioner-secret ko-apply deploy-ako ## Run the second half of the local deploy
 	@echo ""
 	@echo "  Phase 2 complete."
 	@echo "  → open http://localhost:8090"
@@ -25,13 +25,14 @@ deploy: ## Run the full local deploy pipeline
 	  --step "sync-agent"   "$(MAKE) deploy-sync-agent" \
 	  --step "provisioner"  "$(MAKE) create-provisioner-secret" \
 	  --step "controllers"  "$(MAKE) ko-apply" \
+	  --step "atlas"        "$(MAKE) deploy-ako" \
 	  --step "headlamp"     "$(MAKE) deploy-headlamp"
 
 .PHONY: undeploy
 undeploy: undeploy-sync-agent undeploy-headlamp undeploy-kro undeploy-kcp undeploy-capi undeploy-cert-manager ## Remove the deployed local stack from the current cluster
 	$(KUBECTL) delete -f deploy/mock-mongodb/     --ignore-not-found
-	$(KUBECTL) delete -f deploy/mock-flexcluster/ --ignore-not-found
 	$(KUBECTL) delete -f deploy/kubernetes-controller/ --ignore-not-found
 	$(KUBECTL) delete -f deploy/provisioner/      --ignore-not-found
+	$(MAKE) undeploy-ako
 	$(KUBECTL) delete -f config/atlas-crds/       --ignore-not-found
 	$(KUBECTL) delete -f config/mck-crds/         --ignore-not-found
