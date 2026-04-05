@@ -9,9 +9,6 @@ MK_DIR := mk
 
 include $(MK_DIR)/common.mk
 
-.PHONY: all
-all: refresh-crds ## Refresh vendored upstream CRDs
-
 include $(MK_DIR)/crds.mk
 include $(MK_DIR)/ako.mk
 include $(MK_DIR)/bootstrap.mk
