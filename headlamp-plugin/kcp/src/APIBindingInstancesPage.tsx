@@ -17,7 +17,7 @@ import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import { Icon } from '@iconify/react';
 import { generatePath } from 'react-router';
-import { useHistory, useParams } from 'react-router-dom';
+import { useHistory, useLocation, useParams } from 'react-router-dom';
 import {
   APIBindingResourceMeta,
   decodeResourceKey,
@@ -30,51 +30,49 @@ import {
 
 interface InstanceRouteParams {
   resourceKey?: string;
-  namespace?: string;
-  name?: string;
 }
 
 function selectedNamespaceParam(resource: APIBindingResourceMeta, namespace?: string): string {
   return resource.isNamespaced ? namespace || '-' : '-';
 }
 
-function pushInstanceRoute(
+function makeClusterPath(path: string, cluster: string | null): string {
+  return cluster ? generatePath(Utils.getClusterPrefixedPath(path), { cluster }) : path;
+}
+
+function buildDrawerSearch(resource: APIBindingResourceMeta, namespace?: string, name?: string): string {
+  const params = new URLSearchParams();
+  params.set('resourceKey', resource.key);
+  if (name && name.length > 0) {
+    params.set('name', name);
+    if (resource.isNamespaced) {
+      params.set('namespace', selectedNamespaceParam(resource, namespace));
+    }
+  }
+  const search = params.toString();
+  return search ? `?${search}` : '';
+}
+
+function pushInstancesRoute(
   history: ReturnType<typeof useHistory>,
-  resource: APIBindingResourceMeta,
+  pathname: string,
+  resource: APIBindingResourceMeta | null,
   cluster: string | null,
   namespace?: string,
   name?: string
 ) {
-  let path = makeResourceRoutePath(resource);
-  if (name && name.length > 0) {
-    path = `${path}/${selectedNamespaceParam(resource, namespace)}/${encodeURIComponent(name)}`;
-  }
-
   history.push({
-    pathname: cluster
-      ? generatePath(Utils.getClusterPrefixedPath(path), { cluster })
-      : path,
+    pathname: makeClusterPath(pathname, cluster),
+    search: resource ? buildDrawerSearch(resource, namespace, name) : '',
   });
 }
 
-function findResourceForItem(
-  resources: APIBindingResourceMeta[],
-  item: KubeObject
-): APIBindingResourceMeta | null {
+function aggregateItemKey(item: KubeObject): string {
   const apiVersion = item.jsonData?.apiVersion ?? '';
-  const [group = '', version = ''] = apiVersion.includes('/')
-    ? apiVersion.split('/')
-    : ['', apiVersion];
-  const kind = item.kind ?? item.jsonData?.kind ?? '';
-
-  return (
-    resources.find(
-      resource =>
-        resource.group === group &&
-        resource.version === version &&
-        resource.kind === kind
-    ) ?? null
-  );
+  const namespace = item.metadata?.namespace ?? '-';
+  const name = item.metadata?.name ?? '';
+  const uid = item.metadata?.uid ?? '';
+  return [apiVersion, namespace, name, uid].join('|');
 }
 
 function LinkButton({
@@ -242,6 +240,7 @@ function AggregateInstancesList({
 }) {
   const history = useHistory();
   const cluster = Utils.getCluster();
+  const basePath = '/kcp/apibindings/instances';
   const labels = React.useMemo(() => makeResourceLabelMap(resources), [resources]);
 
   const listResults = resources.map(resource => {
@@ -251,10 +250,19 @@ function AggregateInstancesList({
   });
 
   const allFailed = listResults.length > 0 && listResults.every(result => result.error);
-  const loading = listResults.some(result => result.items === null && !result.error);
+  const anyLoading = listResults.some(result => result.items === null && !result.error);
+  const resourceByItemKey = React.useMemo(() => {
+    const entries = new Map<string, APIBindingResourceMeta>();
+    listResults.forEach(result => {
+      (result.items ?? []).forEach(item => {
+        entries.set(aggregateItemKey(item), result.resource);
+      });
+    });
+    return entries;
+  }, [listResults]);
   const data = listResults.flatMap(result => result.items ?? []);
 
-  if (loading) {
+  if (data.length === 0 && anyLoading) {
     return <Loader title="Loading APIBinding instances…" />;
   }
 
@@ -270,13 +278,20 @@ function AggregateInstancesList({
     <ResourceListView
       title="Instances"
       data={data}
+      headerProps={{
+        subtitle: anyLoading ? (
+          <Typography variant="body2" color="text.secondary">
+            Loading more resources…
+          </Typography>
+        ) : undefined,
+      }}
       columns={[
         {
           id: 'name',
           label: 'Name',
           getValue: (item: KubeObject) => item.metadata?.name ?? '',
           render: (item: KubeObject) => {
-            const resource = findResourceForItem(resources, item);
+            const resource = resourceByItemKey.get(aggregateItemKey(item));
             if (!resource) {
               return item.metadata?.name ?? '—';
             }
@@ -285,8 +300,9 @@ function AggregateInstancesList({
               <LinkButton
                 label={item.metadata?.name}
                 onClick={() =>
-                  pushInstanceRoute(
+                  pushInstancesRoute(
                     history,
+                    basePath,
                     resource,
                     cluster,
                     item.metadata?.namespace,
@@ -301,11 +317,11 @@ function AggregateInstancesList({
           id: 'resourceType',
           label: 'Resource',
           getValue: (item: KubeObject) => {
-            const resource = findResourceForItem(resources, item);
+            const resource = resourceByItemKey.get(aggregateItemKey(item));
             return resource ? labels[resource.key] : item.kind ?? '';
           },
           render: (item: KubeObject) => {
-            const resource = findResourceForItem(resources, item);
+            const resource = resourceByItemKey.get(aggregateItemKey(item));
             if (!resource) {
               return item.kind ?? '—';
             }
@@ -313,7 +329,11 @@ function AggregateInstancesList({
             return (
               <LinkButton
                 label={labels[resource.key]}
-                onClick={() => pushInstanceRoute(history, resource, cluster)}
+                onClick={() =>
+                  history.push({
+                    pathname: makeClusterPath(makeResourceRoutePath(resource), cluster),
+                  })
+                }
               />
             );
           },
@@ -428,17 +448,29 @@ function SelectedInstanceDrawer({
 
 export default function APIBindingInstancesPage() {
   const history = useHistory();
+  const location = useLocation();
   const cluster = Utils.getCluster();
-  const { resourceKey, namespace, name } = useParams<InstanceRouteParams>();
+  const { resourceKey } = useParams<InstanceRouteParams>();
   const { resources, error, loading } = useAPIBindingResources();
   useRegisterAPIBindingResourceSidebarEntries(resources);
-
-  const selectedResource = React.useMemo(() => {
+  const searchParams = React.useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const drawerName = searchParams.get('name') ?? '';
+  const drawerNamespace = searchParams.get('namespace') ?? undefined;
+  const drawerResourceKey = searchParams.get('resourceKey') ?? '';
+  const currentPath = React.useMemo(() => {
     if (!resourceKey) {
+      return '/kcp/apibindings/instances';
+    }
+    return `/kcp/apibindings/instances/${resourceKey}`;
+  }, [resourceKey]);
+
+  const selectedResourceKey = resourceKey || drawerResourceKey;
+  const selectedResource = React.useMemo(() => {
+    if (!selectedResourceKey) {
       return null;
     }
 
-    const decoded = decodeResourceKey(resourceKey);
+    const decoded = decodeResourceKey(selectedResourceKey);
     if (!decoded) {
       return null;
     }
@@ -451,17 +483,16 @@ export default function APIBindingInstancesPage() {
           resource.resource === decoded.resource
       ) ?? null
     );
-  }, [resourceKey, resources]);
+  }, [resources, selectedResourceKey]);
 
   const labels = React.useMemo(() => makeResourceLabelMap(resources), [resources]);
 
   const handleClose = React.useCallback(() => {
-    if (!selectedResource) {
-      return;
-    }
-
-    pushInstanceRoute(history, selectedResource, cluster);
-  }, [cluster, history, selectedResource]);
+    history.push({
+      pathname: makeClusterPath(currentPath, cluster),
+      search: '',
+    });
+  }, [cluster, currentPath, history]);
 
   if (loading) {
     return <Loader title="Loading APIBinding resources…" />;
@@ -476,7 +507,19 @@ export default function APIBindingInstancesPage() {
       return <EmptyContent>No bound APIBinding resources found.</EmptyContent>;
     }
 
-    return <AggregateInstancesList resources={resources} />;
+    return (
+      <>
+        <AggregateInstancesList resources={resources} />
+        {drawerName && selectedResource && (
+          <SelectedInstanceDrawer
+            resource={selectedResource}
+            namespace={drawerNamespace}
+            name={drawerName}
+            onClose={handleClose}
+          />
+        )}
+      </>
+    );
   }
 
   if (!selectedResource) {
@@ -512,8 +555,9 @@ export default function APIBindingInstancesPage() {
               <LinkButton
                 label={item.metadata?.name}
                 onClick={() =>
-                  pushInstanceRoute(
+                  pushInstancesRoute(
                     history,
+                    makeResourceRoutePath(selectedResource),
                     selectedResource,
                     cluster,
                     item.metadata?.namespace,
@@ -527,11 +571,11 @@ export default function APIBindingInstancesPage() {
           'age',
         ]}
       />
-      {name && (
+      {drawerName && (
         <SelectedInstanceDrawer
           resource={selectedResource}
-          namespace={namespace}
-          name={name}
+          namespace={drawerNamespace}
+          name={drawerName}
           onClose={handleClose}
         />
       )}

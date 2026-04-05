@@ -31,6 +31,9 @@ interface DiscoveryResourceEntry {
 }
 
 interface ResourceAccumulator extends APIBindingResourceMeta {}
+interface DiscoveryDocument {
+  resources?: DiscoveryResourceEntry[];
+}
 
 const sidebarEntriesVisible = new Set<string>();
 let sidebarFilterRegistered = false;
@@ -118,19 +121,16 @@ function getBoundResources(item: any): any[] {
 }
 
 async function discoverResource(
-  group: string,
-  version: string,
-  resource: string,
-  cluster?: string | null
+  discoveryPromise: Promise<DiscoveryDocument>,
+  resource: string
 ): Promise<DiscoveryResourceEntry | null> {
-  const discovery = await request(`/apis/${group}/${version}`, { cluster: cluster ?? undefined });
+  const discovery = await discoveryPromise;
   return (
     (discovery?.resources ?? []).find((item: DiscoveryResourceEntry) => item.name === resource) ?? null
   );
 }
 
-export async function loadAPIBindingResources(cluster?: string | null): Promise<APIBindingResourceMeta[]> {
-  const bindings = await fetchAPIBindings(cluster);
+function buildBaseAPIBindingResources(bindings: any[]): APIBindingResourceMeta[] {
   const accumulators = new Map<string, ResourceAccumulator>();
 
   bindings.forEach((binding: any) => {
@@ -172,25 +172,6 @@ export async function loadAPIBindingResources(cluster?: string | null): Promise<
     });
   });
 
-  const discoveries = await Promise.all(
-    Array.from(accumulators.values()).map(async meta => {
-      const discovered = await discoverResource(meta.group, meta.version, meta.resource, cluster);
-      return { meta, discovered };
-    })
-  );
-
-  discoveries.forEach(({ meta, discovered }) => {
-    if (!discovered) {
-      return;
-    }
-
-    meta.kind = discovered.kind ?? meta.kind;
-    meta.isNamespaced =
-      typeof discovered.namespaced === 'boolean' ? discovered.namespaced : meta.isNamespaced;
-    meta.singularName = discovered.singularName || meta.singularName;
-    meta.pluralName = discovered.name || meta.pluralName;
-  });
-
   return Array.from(accumulators.values()).sort((a, b) => {
     const byKind = a.kind.localeCompare(b.kind);
     if (byKind !== 0) {
@@ -199,6 +180,56 @@ export async function loadAPIBindingResources(cluster?: string | null): Promise<
 
     return a.group.localeCompare(b.group);
   });
+}
+
+function mergeDiscoveredAPIBindingResources(
+  resources: APIBindingResourceMeta[],
+  discoveries: Map<string, DiscoveryResourceEntry | null>
+): APIBindingResourceMeta[] {
+  return resources
+    .map(resource => {
+      const discovered = discoveries.get(resource.key);
+      if (!discovered) {
+        return resource;
+      }
+
+      return {
+        ...resource,
+        kind: discovered.kind ?? resource.kind,
+        isNamespaced:
+          typeof discovered.namespaced === 'boolean' ? discovered.namespaced : resource.isNamespaced,
+        singularName: discovered.singularName || resource.singularName,
+        pluralName: discovered.name || resource.pluralName,
+      };
+    })
+    .sort((a, b) => {
+      const byKind = a.kind.localeCompare(b.kind);
+      if (byKind !== 0) {
+        return byKind;
+      }
+
+      return a.group.localeCompare(b.group);
+    });
+}
+
+async function loadDiscoveredAPIBindingResources(
+  resources: APIBindingResourceMeta[],
+  cluster?: string | null
+): Promise<APIBindingResourceMeta[]> {
+  const discoveryRequests = new Map<string, Promise<DiscoveryDocument>>();
+  const discoveries = await Promise.all(
+    resources.map(async resource => {
+      const discoveryKey = `${cluster ?? ''}:${resource.group}/${resource.version}`;
+      const discoveryPromise =
+        discoveryRequests.get(discoveryKey) ??
+        request(`/apis/${resource.group}/${resource.version}`, { cluster: cluster ?? undefined });
+      discoveryRequests.set(discoveryKey, discoveryPromise);
+
+      const discovered = await discoverResource(discoveryPromise, resource.resource);
+      return [resource.key, discovered] as const;
+    })
+  );
+  return mergeDiscoveredAPIBindingResources(resources, new Map(discoveries));
 }
 
 export function useAPIBindingResources() {
@@ -212,13 +243,29 @@ export function useAPIBindingResources() {
     setLoading(true);
     setError(null);
 
-    loadAPIBindingResources(cluster)
-      .then(nextResources => {
+    fetchAPIBindings(cluster)
+      .then(bindings => {
         if (cancelled) {
           return;
         }
-        setResources(nextResources);
+        const baseResources = buildBaseAPIBindingResources(bindings);
+        setResources(baseResources);
         setLoading(false);
+
+        return loadDiscoveredAPIBindingResources(baseResources, cluster)
+          .then(nextResources => {
+            if (cancelled) {
+              return;
+            }
+            setResources(nextResources);
+          })
+          .catch(err => {
+            if (cancelled) {
+              return;
+            }
+            // Keep the base resources rendered even if discovery refinement fails.
+            console.warn('Failed to refine APIBinding resource metadata', err);
+          });
       })
       .catch(err => {
         if (cancelled) {

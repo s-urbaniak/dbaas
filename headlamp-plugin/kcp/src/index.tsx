@@ -41,14 +41,6 @@ registerSidebarEntry({
 });
 
 registerRoute({
-  path: '/kcp/apibindings/instances/:resourceKey/:namespace/:name',
-  component: APIBindingInstancesPage,
-  useClusterURL: true,
-  sidebar: 'kcp-apibindings-instances',
-  name: 'kcp-apibinding-instance-detail',
-});
-
-registerRoute({
   path: '/kcp/apibindings/instances/:resourceKey',
   component: APIBindingInstancesPage,
   useClusterURL: true,
