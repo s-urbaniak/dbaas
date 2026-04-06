@@ -25,6 +25,8 @@ spec:
 
   resources:
     - id: dockerCluster
+      readyWhen:
+        - ${has(dockerCluster.status) && has(dockerCluster.status.conditions) && dockerCluster.status.conditions.exists(c, c.type == "Ready" && c.status == "True")}
       template:
         apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
         kind: DockerCluster
@@ -90,7 +92,44 @@ spec:
                     - name: eviction-hard
                       value: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%
 
+    - id: cluster
+      readyWhen:
+        - ${has(cluster.status) && has(cluster.status.conditions) && cluster.status.conditions.exists(c, c.type == "Available" && c.status == "True")}
+        - ${has(cluster.status) && has(cluster.status.conditions) && cluster.status.conditions.exists(c, c.type == "ControlPlaneAvailable" && c.status == "True")}
+        - ${has(cluster.status) && has(cluster.status.conditions) && cluster.status.conditions.exists(c, c.type == "WorkersAvailable" && c.status == "True")}
+      template:
+        apiVersion: cluster.x-k8s.io/v1beta2
+        kind: Cluster
+        metadata:
+          name: ${schema.metadata.name}
+          namespace: ${schema.metadata.namespace}
+          labels:
+            addons.dbaas.dev/cni: calico
+            cluster.x-k8s.io/cluster-name: ${schema.metadata.name}
+        spec:
+          clusterNetwork:
+            pods:
+              cidrBlocks:
+                - 192.168.0.0/16
+            serviceDomain: cluster.local
+            services:
+              cidrBlocks:
+                - 10.128.0.0/12
+          infrastructureRef:
+            apiGroup: infrastructure.cluster.x-k8s.io
+            kind: DockerCluster
+            name: ${schema.metadata.name}-docker
+          controlPlaneRef:
+            apiGroup: controlplane.cluster.x-k8s.io
+            kind: KubeadmControlPlane
+            name: ${schema.metadata.name}-control-plane
+
     - id: controlPlane
+      readyWhen:
+        - ${has(controlPlane.status) && has(controlPlane.status.conditions) && controlPlane.status.conditions.exists(c, c.type == "Available" && c.status == "True")}
+        - ${has(controlPlane.status) && has(controlPlane.status.conditions) && controlPlane.status.conditions.exists(c, c.type == "MachinesReady" && c.status == "True")}
+        - ${has(controlPlane.status) && has(controlPlane.status.conditions) && controlPlane.status.conditions.exists(c, c.type == "EtcdClusterHealthy" && c.status == "True")}
+        - ${has(controlPlane.status) && has(controlPlane.status.conditions) && controlPlane.status.conditions.exists(c, c.type == "ControlPlaneComponentsHealthy" && c.status == "True")}
       template:
         apiVersion: controlplane.cluster.x-k8s.io/v1beta2
         kind: KubeadmControlPlane
@@ -111,7 +150,7 @@ spec:
               infrastructureRef:
                 apiGroup: infrastructure.cluster.x-k8s.io
                 kind: DockerMachineTemplate
-                name: ${controlPlaneMachineTemplate.metadata.name}
+                name: ${schema.metadata.name}-control-plane-template
           rollout:
             strategy:
               type: RollingUpdate
@@ -136,35 +175,10 @@ spec:
                   - name: eviction-hard
                     value: nodefs.available<0%,nodefs.inodesFree<0%,imagefs.available<0%
 
-    - id: cluster
-      template:
-        apiVersion: cluster.x-k8s.io/v1beta2
-        kind: Cluster
-        metadata:
-          name: ${schema.metadata.name}
-          namespace: ${schema.metadata.namespace}
-          labels:
-            addons.dbaas.dev/cni: calico
-            cluster.x-k8s.io/cluster-name: ${schema.metadata.name}
-        spec:
-          clusterNetwork:
-            pods:
-              cidrBlocks:
-                - 192.168.0.0/16
-            serviceDomain: cluster.local
-            services:
-              cidrBlocks:
-                - 10.128.0.0/12
-          infrastructureRef:
-            apiGroup: infrastructure.cluster.x-k8s.io
-            kind: DockerCluster
-            name: ${dockerCluster.metadata.name}
-          controlPlaneRef:
-            apiGroup: controlplane.cluster.x-k8s.io
-            kind: KubeadmControlPlane
-            name: ${controlPlane.metadata.name}
-
     - id: workers
+      readyWhen:
+        - ${has(workers.status) && has(workers.status.conditions) && workers.status.conditions.exists(c, c.type == "Available" && c.status == "True")}
+        - ${has(workers.status) && has(workers.status.conditions) && workers.status.conditions.exists(c, c.type == "MachinesReady" && c.status == "True")}
       template:
         apiVersion: cluster.x-k8s.io/v1beta2
         kind: MachineDeployment
@@ -198,8 +212,8 @@ spec:
                 configRef:
                   apiGroup: bootstrap.cluster.x-k8s.io
                   kind: KubeadmConfigTemplate
-                  name: ${workerBootstrapTemplate.metadata.name}
+                  name: ${schema.metadata.name}-worker-bootstrap
               infrastructureRef:
                 apiGroup: infrastructure.cluster.x-k8s.io
                 kind: DockerMachineTemplate
-                name: ${workerMachineTemplate.metadata.name}
+                name: ${schema.metadata.name}-worker-template
