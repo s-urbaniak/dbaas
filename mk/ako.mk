@@ -2,7 +2,7 @@
 
 AKO_IMAGE_REPO ?= kind.local/mongodb-atlas-kubernetes-operator
 
-ako-fetch: require-git ## Fetch the pinned Atlas operator source tree
+ako-fetch: require-git | $(BUILD_DIR) ## Fetch the pinned Atlas operator source tree
 	rm -rf $(AKO_SRC_DIR)
 	git clone https://github.com/mongodb/mongodb-atlas-kubernetes $(AKO_SRC_DIR)
 	git -C $(AKO_SRC_DIR) checkout $(AKO_COMMIT)

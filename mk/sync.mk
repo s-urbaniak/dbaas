@@ -3,12 +3,12 @@ HELM_AGENT_NS := kcp
 HELM_KUBERNETES_AGENT_NS := kcp-kubernetes
 
 .PHONY: create-sync-agent-secret
-create-sync-agent-secret: ## Create the in-cluster kcp kubeconfig secret for the API sync agent
+create-sync-agent-secret: | $(BUILD_DIR) ## Create the in-cluster kcp kubeconfig secret for the API sync agent
 	$(KUBECTL) create namespace $(HELM_AGENT_NS) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	bash $(SCRIPTS_DIR)/create_kubeconfig_secret.sh \
 	  "$(KUBECTL)" \
 	  "$(KCP_KUBECONFIG)" \
-	  /tmp/kcp-syncagent.kubeconfig \
+	  $(BUILD_DIR)/kcp-syncagent.kubeconfig \
 	  https://kcp-front-proxy.kcp.svc.cluster.local:8443/clusters/root:dbaas-provider \
 	  "$(HELM_AGENT_NS)" \
 	  kcp-syncagent-kubeconfig \
@@ -16,12 +16,12 @@ create-sync-agent-secret: ## Create the in-cluster kcp kubeconfig secret for the
 	@echo "✓ kcp-syncagent-kubeconfig secret created in namespace $(HELM_AGENT_NS)"
 
 .PHONY: create-kubernetes-sync-agent-secret
-create-kubernetes-sync-agent-secret: ## Create the in-cluster kcp kubeconfig secret for the Kubernetes API sync agent
+create-kubernetes-sync-agent-secret: | $(BUILD_DIR) ## Create the in-cluster kcp kubeconfig secret for the Kubernetes API sync agent
 	$(KUBECTL) create namespace $(HELM_KUBERNETES_AGENT_NS) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	bash $(SCRIPTS_DIR)/create_kubeconfig_secret.sh \
 	  "$(KUBECTL)" \
 	  "$(KCP_KUBECONFIG)" \
-	  /tmp/kcp-kubernetes-syncagent.kubeconfig \
+	  $(BUILD_DIR)/kcp-kubernetes-syncagent.kubeconfig \
 	  https://kcp-front-proxy.kcp.svc.cluster.local:8443/clusters/root:dbaas-provider \
 	  "$(HELM_KUBERNETES_AGENT_NS)" \
 	  kcp-syncagent-kubeconfig \
@@ -29,11 +29,11 @@ create-kubernetes-sync-agent-secret: ## Create the in-cluster kcp kubeconfig sec
 	@echo "✓ kcp-syncagent-kubeconfig secret created in namespace $(HELM_KUBERNETES_AGENT_NS)"
 
 .PHONY: create-provisioner-secret
-create-provisioner-secret: ## Create the in-cluster kcp kubeconfig secret for the provisioner
+create-provisioner-secret: | $(BUILD_DIR) ## Create the in-cluster kcp kubeconfig secret for the provisioner
 	bash $(SCRIPTS_DIR)/create_kubeconfig_secret.sh \
 	  "$(KUBECTL)" \
 	  "$(KCP_KUBECONFIG)" \
-	  /tmp/kcp-provisioner.kubeconfig \
+	  $(BUILD_DIR)/kcp-provisioner.kubeconfig \
 	  https://kcp-front-proxy.kcp.svc.cluster.local:8443/clusters/root \
 	  default \
 	  kcp-admin-kubeconfig \

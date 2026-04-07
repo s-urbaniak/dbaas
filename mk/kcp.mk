@@ -32,7 +32,7 @@ apply-kcp-front-proxy-cert: ## Reconcile the kcp front-proxy certificate with de
 	$(KUBECTL) -n $(HELM_KCP_NS) rollout status deployment/kcp-front-proxy --timeout=600s
 
 .PHONY: get-kcp-kubeconfig
-get-kcp-kubeconfig: ## Build a self-contained kcp admin kubeconfig at KCP_KUBECONFIG
+get-kcp-kubeconfig: | $(BUILD_DIR) ## Build a self-contained kcp admin kubeconfig at KCP_KUBECONFIG
 	@CA=$$($(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-ca -o jsonpath='{.data.tls\.crt}'); \
 	 CERT=$$($(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-admin-client-cert -o jsonpath='{.data.tls\.crt}'); \
 	 KEY=$$($(KUBECTL) -n $(HELM_KCP_NS) get secret kcp-admin-client-cert -o jsonpath='{.data.tls\.key}'); \
