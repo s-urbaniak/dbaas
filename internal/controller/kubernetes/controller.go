@@ -11,14 +11,15 @@ import (
 	"strings"
 	"time"
 
+	kroapi "github.com/s-urbaniak/dbaas/api/v1alpha1"
+
 	kcpapis "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 	kcpclientset "github.com/kcp-dev/sdk/client/clientset/versioned"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/discovery"
@@ -28,22 +29,12 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
-
-var kubernetesGVK = schema.GroupVersionKind{
-	Group:   "kro.run",
-	Version: "v1alpha1",
-	Kind:    "Kubernetes",
-}
-
-var capiClusterGVK = schema.GroupVersionKind{
-	Group:   "cluster.x-k8s.io",
-	Version: "v1beta2",
-	Kind:    "Cluster",
-}
 
 const kubernetesFinalizer = "dbaas.mongodb.com/kubernetes-mount"
 const controlPlaneNoScheduleTaintKey = "node-role.kubernetes.io/control-plane"
@@ -58,8 +49,7 @@ type Reconciler struct {
 }
 
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(kubernetesGVK)
+	obj := &kroapi.Kubernetes{}
 	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -68,10 +58,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return r.reconcileDelete(ctx, obj)
 	}
 
-	if !containsString(obj.GetFinalizers(), kubernetesFinalizer) {
-		patch := client.MergeFrom(obj.DeepCopy())
-		obj.SetFinalizers(append(obj.GetFinalizers(), kubernetesFinalizer))
-		if err := r.Patch(ctx, obj, patch); err != nil {
+	if controllerutil.AddFinalizer(obj, kubernetesFinalizer) {
+		if err := r.Update(ctx, obj); err != nil {
 			return ctrl.Result{}, fmt.Errorf("adding finalizer: %w", err)
 		}
 	}
@@ -110,15 +98,15 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		phase = "Connecting"
 	}
 
-	if err := r.patchKubernetesStatus(ctx, obj, phase, clusterReady && kubeconfigReady, statusURL, mountedWorkspace); err != nil {
+	if err := r.patchStatusAnnotation(ctx, obj.GetNamespace(), obj.GetName(), phase, clusterReady && kubeconfigReady, statusURL, mountedWorkspace); err != nil {
 		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 }
 
-func (r *Reconciler) reconcileDelete(ctx context.Context, obj *unstructured.Unstructured) (ctrl.Result, error) {
-	if !containsString(obj.GetFinalizers(), kubernetesFinalizer) {
+func (r *Reconciler) reconcileDelete(ctx context.Context, obj *kroapi.Kubernetes) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(obj, kubernetesFinalizer) {
 		return ctrl.Result{}, nil
 	}
 
@@ -130,44 +118,67 @@ func (r *Reconciler) reconcileDelete(ctx context.Context, obj *unstructured.Unst
 		return ctrl.Result{}, err
 	}
 
-	patch := client.MergeFrom(obj.DeepCopy())
-	obj.SetFinalizers(removeString(obj.GetFinalizers(), kubernetesFinalizer))
-	if err := r.Patch(ctx, obj, patch); err != nil {
-		return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
+	if controllerutil.RemoveFinalizer(obj, kubernetesFinalizer) {
+		if err := r.Update(ctx, obj); err != nil {
+			return ctrl.Result{}, fmt.Errorf("removing finalizer: %w", err)
+		}
 	}
 
 	return ctrl.Result{}, nil
 }
 
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(kubernetesGVK)
-	return ctrl.NewControllerManagedBy(mgr).For(obj).Complete(r)
+	return ctrl.NewControllerManagedBy(mgr).For(&kroapi.Kubernetes{}).Complete(r)
 }
 
-func (r *Reconciler) patchKubernetesStatus(
+const annotationStatus = "dbaas.mongodb.com/status"
+
+type statusAnnotation struct {
+	Phase            string `json:"phase"`
+	Ready            bool   `json:"ready"`
+	URL              string `json:"url"`
+	MountedWorkspace string `json:"mountedWorkspace"`
+}
+
+func (r *Reconciler) patchStatusAnnotation(
 	ctx context.Context,
-	obj *unstructured.Unstructured,
+	namespace, name string,
 	phase string,
 	ready bool,
 	statusURL string,
 	mountedWorkspace string,
 ) error {
-	patch := client.MergeFrom(obj.DeepCopy())
-	if err := unstructured.SetNestedField(obj.Object, phase, "status", "phase"); err != nil {
-		return fmt.Errorf("setting status.phase: %w", err)
+	cluster := &clusterv1.Cluster{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, cluster); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("getting CAPI Cluster %s/%s for annotation: %w", namespace, name, err)
 	}
-	if err := unstructured.SetNestedField(obj.Object, ready, "status", "ready"); err != nil {
-		return fmt.Errorf("setting status.ready: %w", err)
+
+	desired, err := json.Marshal(statusAnnotation{
+		Phase:            phase,
+		Ready:            ready,
+		URL:              statusURL,
+		MountedWorkspace: mountedWorkspace,
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling status annotation: %w", err)
 	}
-	if err := unstructured.SetNestedField(obj.Object, statusURL, "status", "URL"); err != nil {
-		return fmt.Errorf("setting status.URL: %w", err)
+
+	annotations := cluster.GetAnnotations()
+	if annotations != nil && annotations[annotationStatus] == string(desired) {
+		return nil
 	}
-	if err := unstructured.SetNestedField(obj.Object, mountedWorkspace, "status", "mountedWorkspace"); err != nil {
-		return fmt.Errorf("setting status.mountedWorkspace: %w", err)
+
+	patch := client.MergeFrom(cluster.DeepCopy())
+	if annotations == nil {
+		annotations = map[string]string{}
 	}
-	if err := r.Status().Patch(ctx, obj, patch); err != nil {
-		return fmt.Errorf("patching Kubernetes status: %w", err)
+	annotations[annotationStatus] = string(desired)
+	cluster.SetAnnotations(annotations)
+	if err := r.Patch(ctx, cluster, patch); err != nil {
+		return fmt.Errorf("patching CAPI Cluster status annotation: %w", err)
 	}
 	return nil
 }
@@ -177,8 +188,7 @@ func (r *Reconciler) workloadClusterPhase(
 	namespace string,
 	name string,
 ) (ready bool, phase string, err error) {
-	cluster := &unstructured.Unstructured{}
-	cluster.SetGroupVersionKind(capiClusterGVK)
+	cluster := &clusterv1.Cluster{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, cluster); err != nil {
 		if apierrors.IsNotFound(err) {
 			return false, "Initializing", nil
@@ -186,18 +196,11 @@ func (r *Reconciler) workloadClusterPhase(
 		return false, "", fmt.Errorf("getting CAPI Cluster %s/%s: %w", namespace, name, err)
 	}
 
-	conditions, _, _ := unstructured.NestedSlice(cluster.Object, "status", "conditions")
-	for _, raw := range conditions {
-		condition, ok := raw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if condition["type"] == "Available" && condition["status"] == "True" {
-			return true, "Ready", nil
-		}
+	if apimeta.IsStatusConditionTrue(cluster.Status.Conditions, "Available") {
+		return true, "Ready", nil
 	}
 
-	if clusterPhase, _, _ := unstructured.NestedString(cluster.Object, "status", "phase"); clusterPhase != "" {
+	if cluster.Status.Phase != "" {
 		return false, "Connecting", nil
 	}
 	return false, "Initializing", nil
@@ -262,7 +265,7 @@ func (r *Reconciler) ensureCalicoInstalled(ctx context.Context, namespace string
 			return fmt.Errorf("marshalling %s %s: %w", gvk.Kind, u.GetName(), err)
 		}
 
-		if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		if mapping.Scope.Name() == apimeta.RESTScopeNameNamespace {
 			if _, err := dyn.Resource(mapping.Resource).Namespace(u.GetNamespace()).Patch(
 				ctx,
 				u.GetName(),
@@ -294,13 +297,10 @@ func (r *Reconciler) ensureCalicoInstalled(ctx context.Context, namespace string
 	return nil
 }
 
-func (r *Reconciler) reconcileControlPlaneScheduling(ctx context.Context, obj *unstructured.Unstructured) error {
-	allowScheduling, found, err := unstructured.NestedBool(obj.Object, "spec", "allowSchedulingOnControlPlanes")
-	if err != nil {
-		return fmt.Errorf("reading spec.allowSchedulingOnControlPlanes: %w", err)
-	}
-	if !found {
-		allowScheduling = true
+func (r *Reconciler) reconcileControlPlaneScheduling(ctx context.Context, obj *kroapi.Kubernetes) error {
+	allowScheduling := true
+	if obj.Spec.AllowSchedulingOnControlPlanes != nil {
+		allowScheduling = *obj.Spec.AllowSchedulingOnControlPlanes
 	}
 
 	cfg, err := r.workloadRESTConfig(ctx, obj.GetNamespace(), obj.GetName())
@@ -494,25 +494,6 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func containsString(values []string, needle string) bool {
-	for _, value := range values {
-		if value == needle {
-			return true
-		}
-	}
-	return false
-}
-
-func removeString(values []string, needle string) []string {
-	filtered := make([]string, 0, len(values))
-	for _, value := range values {
-		if value != needle {
-			filtered = append(filtered, value)
-		}
-	}
-	return filtered
 }
 
 func boolPtr(value bool) *bool {

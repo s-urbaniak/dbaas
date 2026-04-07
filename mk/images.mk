@@ -1,3 +1,10 @@
+CONTROLLER_GEN_VERSION ?= v0.20.1
+CONTROLLER_GEN ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION)
+
+.PHONY: generate
+generate: ## Generate deepcopy methods for API types
+	$(CONTROLLER_GEN) object paths=./api/...
+
 .PHONY: ko-build ko-apply
 ko-build: ## Build the local controller and provisioner images with ko
 	KO_DOCKER_REPO=$(KO_DOCKER_REPO) KIND_CLUSTER_NAME=$(KIND_CLUSTER_NAME) \

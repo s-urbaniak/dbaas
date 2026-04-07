@@ -12,10 +12,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
+	clusterv1 "sigs.k8s.io/cluster-api/api/core/v1beta2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	kroapi "github.com/s-urbaniak/dbaas/api/v1alpha1"
 	kubernetescontroller "github.com/s-urbaniak/dbaas/internal/controller/kubernetes"
 )
 
@@ -54,6 +56,8 @@ func main() {
 
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
+	_ = clusterv1.AddToScheme(scheme)
+	_ = kroapi.AddToScheme(scheme)
 
 	mgr, err := ctrl.NewManager(k8sConfig, ctrl.Options{
 		Scheme:                  scheme,

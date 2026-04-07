@@ -26,14 +26,14 @@ spec:
       members: 'integer | minimum=1 description="Requested replica set member count for the database."'
       storage: 'string | description="Requested storage tier or size for the database."'
     status:
-      providerState: '${atlasFlexCluster.status.?conditions[1].status.orValue("") == "False" ? atlasFlexCluster.status.conditions[1].message : (atlasCluster.status.?conditions[1].status.orValue("") == "False" ? atlasCluster.status.conditions[1].message : atlasFlexCluster.status.?v20250312.stateName.orValue(atlasCluster.status.?v20250312.stateName.orValue(mckMongoDB.status.phase)))}'
+      providerState: '${atlasFlexCluster.status.?v20250312.stateName.orValue(atlasCluster.status.?v20250312.stateName.orValue(mckMongoDB.status.?phase.orValue("")))}'
       ready: '${atlasFlexCluster.status.?conditions[1].status.orValue(atlasCluster.status.?conditions[1].status.orValue("True"))}'
       readyReason: '${atlasFlexCluster.status.?conditions[1].reason.orValue(atlasCluster.status.?conditions[1].reason.orValue("Ready"))}'
       readyMessage: '${atlasFlexCluster.status.?conditions[1].message.orValue(atlasCluster.status.?conditions[1].message.orValue(""))}'
-      connectionString: '${atlasCluster.status.?v20250312.stateName.orValue("") != "" ? atlasCluster.status.v20250312.connectionStrings.standardSrv : (atlasFlexCluster.status.?v20250312.stateName.orValue("") != "" ? atlasFlexCluster.status.v20250312.connectionStrings.standardSrv : "mongodb://" + mckMongoDB.metadata.name + "." + mckMongoDB.metadata.namespace + ".svc:27017")}'
+      connectionString: '${atlasFlexCluster.status.?v20250312.connectionStrings.standardSrv.orValue(atlasCluster.status.?v20250312.connectionStrings.standardSrv.orValue(""))}'
       connectionStrings:
-        standard: '${atlasCluster.status.?v20250312.stateName.orValue("") != "" ? atlasCluster.status.v20250312.connectionStrings.standard : (atlasFlexCluster.status.?v20250312.stateName.orValue("") != "" ? atlasFlexCluster.status.v20250312.connectionStrings.standard : "mongodb://" + mckMongoDB.metadata.name + "." + mckMongoDB.metadata.namespace + ".svc:27017")}'
-        standardSrv: '${atlasCluster.status.?v20250312.stateName.orValue("") != "" ? atlasCluster.status.v20250312.connectionStrings.standardSrv : (atlasFlexCluster.status.?v20250312.stateName.orValue("") != "" ? atlasFlexCluster.status.v20250312.connectionStrings.standardSrv : "")}'
+        standard: '${atlasFlexCluster.status.?v20250312.connectionStrings.standard.orValue(atlasCluster.status.?v20250312.connectionStrings.standard.orValue(""))}'
+        standardSrv: '${atlasFlexCluster.status.?v20250312.connectionStrings.standardSrv.orValue(atlasCluster.status.?v20250312.connectionStrings.standardSrv.orValue(""))}'
 
   resources:
     - id: atlasOperatorCredentials

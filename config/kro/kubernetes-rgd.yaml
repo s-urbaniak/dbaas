@@ -18,10 +18,10 @@ spec:
       allowSchedulingOnControlPlanes: 'boolean | default=true description="Allow regular pods to be scheduled onto control-plane nodes. Defaults to true."'
       machineCount: 'MachineCount | description="Requested control-plane and worker node counts for the cluster."'
     status:
-      URL: '${cluster.metadata.name}'
-      mountedWorkspace: '${cluster.metadata.name}'
-      phase: '${cluster.status.phase}'
-      ready: '${cluster.status.conditions.exists(c, c.type == "Available" && c.status == "True")}'
+      phase: '${has(cluster.metadata.annotations) && "dbaas.mongodb.com/status" in cluster.metadata.annotations ? json.unmarshal(cluster.metadata.annotations["dbaas.mongodb.com/status"]).phase : "Initializing"}'
+      ready: '${has(cluster.metadata.annotations) && "dbaas.mongodb.com/status" in cluster.metadata.annotations ? json.unmarshal(cluster.metadata.annotations["dbaas.mongodb.com/status"]).ready : false}'
+      URL: '${has(cluster.metadata.annotations) && "dbaas.mongodb.com/status" in cluster.metadata.annotations ? json.unmarshal(cluster.metadata.annotations["dbaas.mongodb.com/status"]).url : ""}'
+      mountedWorkspace: '${has(cluster.metadata.annotations) && "dbaas.mongodb.com/status" in cluster.metadata.annotations ? json.unmarshal(cluster.metadata.annotations["dbaas.mongodb.com/status"]).mountedWorkspace : ""}'
 
   resources:
     - id: dockerCluster

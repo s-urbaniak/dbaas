@@ -9,6 +9,7 @@ AKO_COMMIT ?= ad57bc1cca9482f78c6fb3271f43488a40ccdb2d
 AKO_SRC_DIR ?= $(BUILD_DIR)/mongodb-atlas-kubernetes-$(AKO_COMMIT)
 AKO_RELEASE_VERSION ?= v2.13.2
 AKO_LEGACY_CRDS_DIR ?= $(AKO_SRC_DIR)/releases/$(AKO_RELEASE_VERSION)/deploy/crds
+ATLAS_DOMAIN ?= https://cloud.mongodb.com/
 ATLAS_OPERATOR_NAMESPACE ?= mongodb-atlas-system
 ATLAS_OPERATOR_SECRET_NAME ?= mongodb-atlas-operator-api-key
 

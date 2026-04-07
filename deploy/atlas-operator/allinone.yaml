@@ -391,7 +391,7 @@ spec:
       containers:
         - name: manager
           args:
-            - --atlas-domain=https://cloud.mongodb.com/
+            - --atlas-domain=ATLAS_DOMAIN_PLACEHOLDER
             - --health-probe-bind-address=:8081
             - --metrics-bind-address=:8080
             - --object-deletion-protection=false

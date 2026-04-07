@@ -81,8 +81,8 @@ For Atlas-backed databases, export credentials before deploy:
 
 ```bash
 export ATLAS_ORG_ID=...
-export ATLAS_PUBLIC_API_KEY=...
-export ATLAS_PRIVATE_API_KEY=...
+export ATLAS_PUBLIC_KEY=...
+export ATLAS_PRIVATE_KEY=...
 ```
 
 This runs the full pipeline:
@@ -179,7 +179,6 @@ spec:
   provider: AWS
   tier: FLEX
   region: US_EAST_1
-  members: 3
 EOF
 ```
 

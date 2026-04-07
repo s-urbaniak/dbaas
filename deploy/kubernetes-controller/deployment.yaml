@@ -10,11 +10,11 @@ metadata:
   name: kubernetes-controller
 rules:
   - apiGroups: ["kro.run"]
-    resources: ["kubernetes", "kubernetes/status"]
+    resources: ["kubernetes"]
     verbs: ["get", "list", "watch", "patch", "update"]
   - apiGroups: ["cluster.x-k8s.io"]
     resources: ["clusters"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch"]
