@@ -19,14 +19,12 @@ package provisioner
 import (
 	"context"
 	"fmt"
-	"time"
 
 	kcpcorev1alpha1 "github.com/kcp-dev/sdk/apis/core/v1alpha1"
 	kcptenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 	kcpclientset "github.com/kcp-dev/sdk/client/clientset/versioned"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 )
 
@@ -39,11 +37,13 @@ func IsTransientPhase(phase string) bool {
 	return true
 }
 
-// ProvisionWorkspace creates a new consumer workspace and binds the configured APIExports into it.
-func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (string, error) {
+// ProvisionWorkspace creates a new consumer workspace. The workspace will not
+// be ready immediately; the background reconciler completes the setup once the
+// workspace reaches the Ready phase.
+func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) error {
 	consumersClient, err := p.kcpClientForWorkspace(p.ConsumersWorkspace)
 	if err != nil {
-		return "", fmt.Errorf("creating consumers client: %w", err)
+		return fmt.Errorf("creating consumers client: %w", err)
 	}
 
 	ws := &kcptenancyv1alpha1.Workspace{
@@ -59,43 +59,39 @@ func (p *Provisioner) ProvisionWorkspace(ctx context.Context, name string) (stri
 		},
 	}
 	if _, err := consumersClient.TenancyV1alpha1().Workspaces().Create(ctx, ws, metav1.CreateOptions{}); err != nil {
-		return "", fmt.Errorf("creating workspace %q: %w", name, err)
+		if apierrors.IsAlreadyExists(err) {
+			return nil
+		}
+		return fmt.Errorf("creating workspace %q: %w", name, err)
 	}
+	return nil
+}
 
-	var wsURL string
-	if err := wait.PollUntilContextTimeout(ctx, 2*time.Second, 2*time.Minute, false,
-		func(ctx context.Context) (bool, error) {
-			workspace, err := consumersClient.TenancyV1alpha1().Workspaces().Get(ctx, name, metav1.GetOptions{})
-			if err != nil {
-				return false, nil
-			}
-			if string(workspace.Status.Phase) == "Ready" && workspace.Spec.URL != "" {
-				wsURL = workspace.Spec.URL
-				return true, nil
-			}
-			return false, nil
-		},
-	); err != nil {
-		return "", fmt.Errorf("waiting for workspace %q to be ready: %w", name, err)
+// EnsureWorkspaceSetup runs the idempotent post-creation setup for a consumer
+// workspace: APIBindings, scoped credentials, and headlamp sync.
+func (p *Provisioner) EnsureWorkspaceSetup(ctx context.Context, name string) error {
+	consumersClient, err := p.kcpClientForWorkspace(p.ConsumersWorkspace)
+	if err != nil {
+		return fmt.Errorf("creating consumers client: %w", err)
 	}
 
 	wsPath := p.ConsumersWorkspace + ":" + name
 	wsClient, err := p.kcpClientForWorkspace(wsPath)
 	if err != nil {
-		return "", fmt.Errorf("creating workspace client: %w", err)
+		return fmt.Errorf("creating workspace client: %w", err)
 	}
 	if err := p.ensureWorkspaceBindings(ctx, wsClient); err != nil {
-		return "", fmt.Errorf("creating APIBindings in workspace %q: %w", name, err)
+		return fmt.Errorf("creating APIBindings in workspace %q: %w", name, err)
 	}
 	if err := p.ensureScopedWorkspaceCredentials(ctx, wsPath); err != nil {
-		return "", fmt.Errorf("creating scoped credentials in workspace %q: %w", name, err)
+		return fmt.Errorf("creating scoped credentials in workspace %q: %w", name, err)
 	}
 	if err := p.markWorkspaceScopedCredentials(ctx, consumersClient, name); err != nil {
-		return "", fmt.Errorf("marking workspace %q for scoped credentials: %w", name, err)
+		return fmt.Errorf("marking workspace %q for scoped credentials: %w", name, err)
 	}
 
 	go p.syncHeadlamp(p.ProcessContext, name, true)
-	return wsURL, nil
+	return nil
 }
 
 // GetWorkspace returns an existing consumer workspace object.
@@ -157,9 +153,15 @@ func (p *Provisioner) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, erro
 
 		switch phase {
 		case "Ready":
-			info.Status = "Ready"
-			info.StatusClass = "success"
-			info.DatabaseCount = p.countDatabases(ctx, p.ConsumersWorkspace+":"+workspace.Name)
+			if p.workspaceCredentialMode(workspace) != workspaceCredentialsScoped {
+				info.Status = "Provisioning"
+				info.StatusClass = "warning text-dark"
+				info.Transient = true
+			} else {
+				info.Status = "Ready"
+				info.StatusClass = "success"
+				info.DatabaseCount = p.countDatabases(ctx, p.ConsumersWorkspace+":"+workspace.Name)
+			}
 		case "":
 			info.Status = "—"
 		default:

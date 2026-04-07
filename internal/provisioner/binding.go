@@ -40,22 +40,8 @@ func (p *Provisioner) ReconcileWorkspaceBindings(ctx context.Context) {
 			continue
 		}
 
-		wsPath := p.ConsumersWorkspace + ":" + workspace.Name
-		client, err := p.kcpClientForWorkspace(wsPath)
-		if err != nil {
-			slog.Error("workspace binding reconcile: client for workspace",
-				"workspace", workspace.Name, "err", err)
-			continue
-		}
-		if err := p.ensureWorkspaceBindings(ctx, client); err != nil {
-			slog.Error("workspace binding reconcile: ensure bindings",
-				"workspace", workspace.Name, "err", err)
-		}
-		if p.workspaceCredentialMode(workspace) != workspaceCredentialsScoped {
-			continue
-		}
-		if err := p.ensureScopedWorkspaceCredentials(ctx, wsPath); err != nil {
-			slog.Error("workspace binding reconcile: ensure scoped credentials",
+		if err := p.EnsureWorkspaceSetup(ctx, workspace.Name); err != nil {
+			slog.Error("workspace reconcile: ensure setup",
 				"workspace", workspace.Name, "err", err)
 		}
 	}

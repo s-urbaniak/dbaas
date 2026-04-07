@@ -19,7 +19,6 @@ package provisioner
 import (
 	"context"
 	"fmt"
-	"time"
 
 	kcptenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 	kcpclientset "github.com/kcp-dev/sdk/client/clientset/versioned"
@@ -27,7 +26,6 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -199,26 +197,14 @@ func (p *Provisioner) workspaceServiceAccountToken(ctx context.Context, wsPath s
 		return "", fmt.Errorf("creating workspace kube client: %w", err)
 	}
 
-	var token string
-	if err := wait.PollUntilContextTimeout(ctx, time.Second, 30*time.Second, false,
-		func(ctx context.Context) (bool, error) {
-			secret, err := client.CoreV1().Secrets(workspaceDefaultNamespace).Get(
-				ctx, workspaceTokenSecretName, metav1.GetOptions{},
-			)
-			if err != nil {
-				if apierrors.IsNotFound(err) {
-					return false, nil
-				}
-				return false, err
-			}
-			if raw := secret.Data["token"]; len(raw) > 0 {
-				token = string(raw)
-				return true, nil
-			}
-			return false, nil
-		},
-	); err != nil {
-		return "", fmt.Errorf("waiting for workspace token secret: %w", err)
+	secret, err := client.CoreV1().Secrets(workspaceDefaultNamespace).Get(
+		ctx, workspaceTokenSecretName, metav1.GetOptions{},
+	)
+	if err != nil {
+		return "", fmt.Errorf("getting workspace token secret: %w", err)
 	}
-	return token, nil
+	if raw := secret.Data["token"]; len(raw) > 0 {
+		return string(raw), nil
+	}
+	return "", fmt.Errorf("workspace token secret %q has no token yet", workspaceTokenSecretName)
 }

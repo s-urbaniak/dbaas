@@ -199,7 +199,7 @@ func handleCreateWorkspace(prov *provisioner.Provisioner) http.HandlerFunc {
 			http.Redirect(w, r, "/?error="+url.QueryEscape("workspace name is required"), http.StatusSeeOther)
 			return
 		}
-		if _, err := prov.ProvisionWorkspace(r.Context(), name); err != nil {
+		if err := prov.ProvisionWorkspace(r.Context(), name); err != nil {
 			http.Redirect(w, r, "/?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 			return
 		}
