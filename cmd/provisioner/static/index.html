@@ -74,13 +74,19 @@
               <td>{{.DatabaseCount}}</td>
               <td>
                 <div class="d-flex gap-2">
-                  {{if not .Transient}}
+                  {{if eq .Phase "Ready"}}
                   <a class="btn btn-sm btn-outline-primary"
                      href="/api/workspaces/{{.Name}}/kubeconfig"
                      download="{{.Name}}.kubeconfig">↓ kubeconfig</a>
+                  {{if .HeadlampReady}}
                   <a class="btn btn-sm btn-outline-secondary"
                      href="{{$.HeadlampBaseURL}}/c/{{.Name}}"
                      target="_blank" rel="noopener">↗ Headlamp</a>
+                  {{else}}
+                  <span class="btn btn-sm btn-outline-secondary disabled ws-headlamp-pending d-inline-flex align-items-center gap-1">
+                    <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                    ↗ Headlamp</span>
+                  {{end}}
                   {{end}}
                   <button class="btn btn-sm btn-outline-danger"
                           {{if .Transient}}disabled{{else}}data-bs-toggle="modal" data-bs-target="#del-{{.Name}}"{{end}}>Delete</button>
@@ -123,7 +129,7 @@
   <script>
     // Auto-refresh every 3 s while any workspace is in a transient phase, but
     // never while a modal dialog is open or the create form is being edited.
-    if (document.querySelector('.ws-transient')) {
+    if (document.querySelector('.ws-transient') || document.querySelector('.ws-headlamp-pending')) {
       let refreshTimer = null;
       const createForm = document.querySelector('form[action="/api/workspaces"]');
       const createInput = createForm?.querySelector('input[name="name"]');

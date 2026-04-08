@@ -89,6 +89,7 @@ type WorkspaceInfo struct {
 	Transient     bool
 	URL           string
 	DatabaseCount int
+	HeadlampReady bool
 }
 
 // kcpBaseURL strips the /clusters/... path from a kcp server URL, returning just the host+port.

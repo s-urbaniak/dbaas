@@ -153,15 +153,10 @@ func (p *Provisioner) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, erro
 
 		switch phase {
 		case "Ready":
-			if p.workspaceCredentialMode(workspace) != workspaceCredentialsScoped {
-				info.Status = "Provisioning"
-				info.StatusClass = "warning text-dark"
-				info.Transient = true
-			} else {
-				info.Status = "Ready"
-				info.StatusClass = "success"
-				info.DatabaseCount = p.countDatabases(ctx, p.ConsumersWorkspace+":"+workspace.Name)
-			}
+			info.Status = "Ready"
+			info.StatusClass = "success"
+			info.HeadlampReady = p.workspaceCredentialMode(workspace) == workspaceCredentialsScoped
+			info.DatabaseCount = p.countDatabases(ctx, p.ConsumersWorkspace+":"+workspace.Name)
 		case "":
 			info.Status = "—"
 		default:
